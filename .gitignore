@@ -1,0 +1,6 @@
+astrometry_cache
+*.egg-info
+*.so
+build
+wheels
+__pycache__

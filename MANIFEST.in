@@ -1,0 +1,6 @@
+include astrometry_extension/astrometry_extension.c
+include astrometry.net/gsl-an/*.h
+include astrometry.net/gsl-an/*.c
+include astrometry.net/include/*.h
+include astrometry.net/include/*.c
+include astrometry.net/util
