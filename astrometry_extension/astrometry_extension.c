@@ -1,3 +1,4 @@
+#include "fitsioutils.h"
 #include "mathutil.h"
 #include "solver.h"
 #include <Python.h>
@@ -366,11 +367,43 @@ static void add_wcs_sip_polynomial(PyObject* wcs_fields, const char* format, int
     }
 }
 
+static fitstable_t* get_tagalong(startree_t* star_tree) {
+    if (!star_tree->tree->io) {
+        return NULL;
+    }
+    const char* filename = fitsbin_get_filename(star_tree->tree->io);
+    if (filename == NULL) {
+        return NULL;
+    }
+    fitstable_t* tag = fitstable_open(filename);
+    if (tag == NULL) {
+        return NULL;
+    }
+    int next = fitstable_n_extensions(tag);
+    int extension = -1;
+    for (int index = 1; index < next; ++index) {
+        const qfits_header* header = anqfits_get_header_const(tag->anq, index);
+        if (header == NULL) {
+            continue;
+        }
+        char* type = fits_get_dupstring(header, "AN_FILE");
+        if (streq(type, AN_FILETYPE_TAGALONG)) {
+            free(type);
+            extension = index;
+            break;
+        }
+        free(type);
+    }
+    if (extension == -1) {
+        return NULL;
+    }
+    fitstable_open_extension(tag, extension);
+    return tag;
+}
+
 static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* args) {
     PyObject* stars_xs;
     PyObject* stars_ys;
-    PyObject* stars_fluxes;
-    PyObject* stars_backgrounds;
     double scale_lower = 0.0;
     double scale_upper = 0.0;
     PyObject* position_hint;
@@ -379,11 +412,9 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     double output_logodds_threshold = 0.0;
     if (!PyArg_ParseTuple(
             args,
-            "OOOOddOsdd",
+            "OOddOsdd",
             &stars_xs,
             &stars_ys,
-            &stars_fluxes,
-            &stars_backgrounds,
             &scale_lower,
             &scale_upper,
             &position_hint,
@@ -440,16 +471,6 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         PyErr_SetString(PyExc_TypeError, "stars_ys must be a list");
         return NULL;
     }
-    const anbool has_fluxes = stars_fluxes != Py_None;
-    if (has_fluxes && !PyList_Check(stars_fluxes)) {
-        PyErr_SetString(PyExc_TypeError, "stars_fluxes must be None or a list");
-        return NULL;
-    }
-    const anbool has_backgrounds = stars_backgrounds != Py_None;
-    if (has_backgrounds && !PyList_Check(stars_backgrounds)) {
-        PyErr_SetString(PyExc_TypeError, "stars_backgrounds must be None or a list");
-        return NULL;
-    }
     const Py_ssize_t stars_size = PyList_GET_SIZE(stars_xs);
     if (stars_size != PyList_GET_SIZE(stars_ys)) {
         PyErr_SetString(PyExc_TypeError, "stars_xs and stars_ys must have the same size");
@@ -457,14 +478,6 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     }
     if (stars_size == 0) {
         PyErr_SetString(PyExc_TypeError, "stars_xs cannot be empty");
-        return NULL;
-    }
-    if (has_fluxes && stars_size != PyList_GET_SIZE(stars_fluxes)) {
-        PyErr_SetString(PyExc_TypeError, "stars_xs and stars_fluxes must have the same size");
-        return NULL;
-    }
-    if (has_backgrounds && stars_size != PyList_GET_SIZE(stars_backgrounds)) {
-        PyErr_SetString(PyExc_TypeError, "stars_xs and stars_backgrounds must have the same size");
         return NULL;
     }
     PyObject* logging = PyImport_ImportModule("logging");
@@ -484,8 +497,8 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     starxy.N = (int)stars_size;
     starxy.x = malloc(sizeof(double) * starxy.N);
     starxy.y = malloc(sizeof(double) * starxy.N);
-    starxy.flux = has_fluxes ? malloc(sizeof(double) * starxy.N) : NULL;
-    starxy.background = has_backgrounds ? malloc(sizeof(double) * starxy.N) : NULL;
+    starxy.flux = NULL;
+    starxy.background = NULL;
     for (Py_ssize_t index = 0; index < stars_size; ++index) {
         starxy.x[index] = PyFloat_AsDouble(PyList_GET_ITEM(stars_xs, index));
         starxy.y[index] = PyFloat_AsDouble(PyList_GET_ITEM(stars_ys, index));
@@ -501,20 +514,11 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         if (starxy.y[index] > starxy.yhi) {
             starxy.yhi = starxy.y[index];
         }
-        if (has_fluxes) {
-            starxy.flux[index] = PyFloat_AsDouble(PyList_GET_ITEM(stars_fluxes, index));
-        }
-        if (has_backgrounds) {
-            starxy.background[index] = PyFloat_AsDouble(PyList_GET_ITEM(stars_backgrounds, index));
-        }
     }
     if (PyErr_Occurred()) {
         starxy_free_data(&starxy);
         PyErr_Clear();
-        PyErr_SetString(
-            PyExc_TypeError,
-            "items in stars_xs, stars_ys, stars_fluxes, and stars_backgrounds "
-            "must be floats");
+        PyErr_SetString(PyExc_TypeError, "items in stars_xs and stars_ys must be floats");
         return NULL;
     }
     callback_context_t context = {
@@ -591,8 +595,11 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
             double dec = 0.0;
             xyzarr2radecdeg(match->center, &ra, &dec);
             PyObject* index_id = PyLong_FromLong(match->index->indexid);
-            const anbool has_tagalong = startree_has_tagalong(match->index->starkd);
-            const int columns = has_tagalong ? startree_get_tagalong_N_columns(match->index->starkd) : 0;
+            if (match->index->starkd->tagalong == NULL) {
+                match->index->starkd->tagalong = get_tagalong(match->index->starkd);
+            }
+            const int columns =
+                match->index->starkd->tagalong == NULL ? 0 : startree_get_tagalong_N_columns(match->index->starkd);
             PyObject* match_stars = PyTuple_New(match->nindex);
             for (int star_id_index = 0; star_id_index < match->nindex; ++star_id_index) {
                 PyObject* key = PyTuple_New(2);
@@ -601,7 +608,11 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
                 PyTuple_SET_ITEM(key, 1, PyLong_FromLong(match->refstarid[star_id_index]));
                 if (PyDict_GetItem(stars, key) == NULL) {
                     PyObject* star = star_to_python_object(
-                        match->index->starkd, match->refstarid[star_id_index], has_tagalong, columns, logging);
+                        match->index->starkd,
+                        match->refstarid[star_id_index],
+                        match->index->starkd->tagalong != NULL,
+                        columns,
+                        logging);
                     PyDict_SetItem(stars, key, star);
                 }
                 PyTuple_SET_ITEM(match_stars, star_id_index, key);
@@ -620,8 +631,8 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
                     PyTuple_SET_ITEM(key, 1, PyLong_FromLong(query->inds[0]));
                     PyTuple_SET_ITEM(match_quad_stars, quad_index, key);
                     if (PyDict_GetItem(stars, key) == NULL) {
-                        PyObject* star =
-                            star_to_python_object(match->index->starkd, query->inds[0], has_tagalong, columns, logging);
+                        PyObject* star = star_to_python_object(
+                            match->index->starkd, query->inds[0], match->index->starkd->tagalong != NULL, columns, logging);
                         PyDict_SetItem(stars, key, star);
                     }
                 } else {

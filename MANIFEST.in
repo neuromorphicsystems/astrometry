@@ -1,6 +1,13 @@
-include astrometry_extension/astrometry_extension.c
-include astrometry.net/gsl-an/*.h
-include astrometry.net/gsl-an/*.c
-include astrometry.net/include/*.h
-include astrometry.net/include/*.c
-include astrometry.net/util
+include test.py
+recursive-include astrometry.net/gsl-an *.h *.c
+include astrometry.net/libkd/*.h
+include astrometry.net/libkd/kdtree_internal.c
+include astrometry.net/libkd/kdtree_internal_dists.c
+include astrometry.net/libkd/kdtree_internal_fits.c
+include astrometry.net/include/astrometry/*.h
+include astrometry.net/include/astrometry/*.ph
+include astrometry.net/include/astrometry/*.inc
+include astrometry.net/solver/*.h
+include astrometry.net/util/boilerplate.h
+include astrometry.net/util/bl-nl.c
+include astrometry.net/util/qsort_reentrant.c

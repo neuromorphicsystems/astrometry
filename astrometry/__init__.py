@@ -1,7 +1,6 @@
 from __future__ import annotations
 import astrometry_extension
 import dataclasses
-import math
 import operator
 import pathlib
 import threading
@@ -25,6 +24,17 @@ DEFAULT_UPPER_ARCSEC_PER_PIXEL = 1000.0
 
 
 @dataclasses.dataclass
+class SizeHint:
+    lower_arcsec_per_pixel: float
+    upper_arcsec_per_pixel: float
+
+    def __post_init__(self):
+        assert self.lower_arcsec_per_pixel > 0
+        assert self.upper_arcsec_per_pixel > 0
+        assert self.lower_arcsec_per_pixel <= self.upper_arcsec_per_pixel
+
+
+@dataclasses.dataclass
 class PositionHint:
     ra_deg: float
     dec_deg: float
@@ -34,17 +44,6 @@ class PositionHint:
         assert self.ra_deg >= 0.0 and self.ra_deg < 360.0
         assert self.dec_deg >= -90.0 and self.dec_deg <= 90.0
         assert self.radius_deg >= 0
-
-
-@dataclasses.dataclass
-class SizeHint:
-    lower_arcsec_per_pixel: float
-    upper_arcsec_per_pixel: float
-
-    def __post_init__(self):
-        assert self.lower_arcsec_per_pixel > 0
-        assert self.upper_arcsec_per_pixel > 0
-        assert self.lower_arcsec_per_pixel <= self.upper_arcsec_per_pixel
 
 
 @dataclasses.dataclass
@@ -59,7 +58,7 @@ class Match:
     logodds: float
     center_ra_deg: float
     center_dec_deg: float
-    scale: float
+    scale_arcsec_per_pixel: float
     index_path: pathlib.Path
     stars: tuple[Star, ...]
     quad_stars: tuple[Star, ...]
@@ -68,13 +67,17 @@ class Match:
 
 @dataclasses.dataclass
 class Solution:
+    solve_id: str
     matches: list[Match]
 
     def __post_init__(self):
-        assert len(self.matches) > 0
-        self.matches.sort(key=operator.attrgetter("logodds"), reverse=True)
+        if len(self.matches) > 0:
+            self.matches.sort(key=operator.attrgetter("logodds"), reverse=True)
 
-    def best_match(self):
+    def has_match(self) -> bool:
+        return len(self.matches) > 0
+
+    def best_match(self) -> Match:
         return self.matches[0]
 
 
@@ -88,16 +91,16 @@ class Solver(astrometry_extension.Solver):
         self,
         stars_xs: typing.Iterable[float],
         stars_ys: typing.Iterable[float],
-        stars_fluxes: typing.Optional[typing.Iterable[float]],
-        stars_backgrounds: typing.Optional[typing.Iterable[float]],
         size_hint: typing.Optional[SizeHint],
         position_hint: typing.Optional[PositionHint],
-        solve_id: typing.Optional[str] = None,
-        tune_up_logodds_threshold: float = math.log(1e6),
-        output_logodds_threshold: float = math.log(1e9),
-    ) -> typing.Optional[Solution]:
+        solve_id: typing.Optional[str],
+        tune_up_logodds_threshold: float,
+        output_logodds_threshold: float,
+    ) -> Solution:
         with self.solve_id_lock:
             self.solve_id += 1
+        if solve_id is None:
+            solve_id = str(self.solve_id)
         if size_hint is None:
             size_hint = SizeHint(
                 lower_arcsec_per_pixel=DEFAULT_LOWER_ARCSEC_PER_PIXEL,
@@ -106,12 +109,6 @@ class Solver(astrometry_extension.Solver):
         raw_solution = super().solve(
             stars_xs if isinstance(stars_xs, list) else list(stars_xs),
             stars_ys if isinstance(stars_ys, list) else list(stars_ys),
-            stars_fluxes
-            if stars_fluxes is None or isinstance(stars_fluxes, list)
-            else list(stars_fluxes),
-            stars_backgrounds
-            if stars_backgrounds is None or isinstance(stars_backgrounds, list)
-            else list(stars_backgrounds),
             size_hint.lower_arcsec_per_pixel,
             size_hint.upper_arcsec_per_pixel,
             None
@@ -121,23 +118,24 @@ class Solver(astrometry_extension.Solver):
                 position_hint.dec_deg,
                 position_hint.radius_deg,
             ),
-            str(self.solve_id) if solve_id is None else solve_id,
+            solve_id,
             tune_up_logodds_threshold,
             output_logodds_threshold,
         )
         if raw_solution is None:
-            return None
+            return Solution(solve_id=solve_id, matches=[])
         stars = {
             key: Star(ra_deg=ra_deg, dec_deg=dec_deg, metadata=metadata)
             for key, (ra_deg, dec_deg, metadata) in raw_solution[0].items()
         }
         solution = Solution(
+            solve_id=solve_id,
             matches=[
                 Match(
                     logodds=logodds,
                     center_ra_deg=center_ra_deg,
                     center_dec_deg=center_dec_deg,
-                    scale=scale,
+                    scale_arcsec_per_pixel=scale_arcsec_per_pixel,
                     index_path=pathlib.Path(index_path),
                     stars=tuple(stars[key] for key in stars_keys),
                     quad_stars=tuple(stars[key] for key in quad_stars_keys),
@@ -147,12 +145,12 @@ class Solver(astrometry_extension.Solver):
                     logodds,
                     center_ra_deg,
                     center_dec_deg,
-                    scale,
+                    scale_arcsec_per_pixel,
                     index_path,
                     stars_keys,
                     quad_stars_keys,
                     wcs_fields,
                 ) in raw_solution[1]
-            ]
+            ],
         )
         return solution
