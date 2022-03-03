@@ -119,7 +119,7 @@ if compiler.startswith("Clang") or compiler.startswith("GCC"):
 
 setuptools.setup(
     name="astrometry",
-    version="0.0.2",
+    version="1.0.0",
     url="https://github.com/neuromorphicsystems/astrometry",
     author="ICNS, Alexandre Marcireau",
     author_email="alexandre.marcireau@gmail.com",
