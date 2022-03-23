@@ -181,7 +181,7 @@ class Solver:
         size_hint: typing.Optional[SizeHint],
         position_hint: typing.Optional[PositionHint],
         solve_id: typing.Optional[str],
-        tune_up_logodds_threshold: float,
+        tune_up_logodds_threshold: typing.Optional[float],
         output_logodds_threshold: float,
     ) -> Solution: ...
 ```
@@ -194,12 +194,30 @@ class Solver:
 -   `size_hint`: Optional angular pixel size range ([SizeHint](#sizehint)). Significantly speeds up `solve` when provided. If `size_hint` is `None`, the range `[0.1, 1000.0]` is used. This default range can be changed by setting `astrometry.DEFAULT_LOWER_ARCSEC_PER_PIXEL` and `astrometry.DEFAULT_UPPER_ARCSEC_PER_PIXEL` to other values.
 -   `position_hint`: Optional field center Ra/Dec coordinates and error radius ([PositionHint](#positionhint)). Significantly speeds up `solve` when provided. If `position_hint` is None, the entire sky is used (`radius_deg = 180.0`).
 -   `solve_id`: Optional plate identifier used in logging messages. If `solve_id` is `None`, it is automatically assigned to a unique integer. The value can be retrieved from the Solution object (`solution.solve_id`).
--   `tune_up_logodds_threshold`: Matches whose log-odds are larger than this value are tuned-up (SIP distortion estimation) and accepted if heir post-tune-up log-odds are larger than `output_logodds_threshold`. The default Astrometry.net value is `math.log(1e6)`.
+-   `tune_up_logodds_threshold`: Matches whose log-odds are larger than this value are tuned-up (SIP distortion estimation) and accepted if their post-tune-up log-odds are larger than `output_logodds_threshold`. `None` disables tune-up and distortion estimation (SIP). The default Astrometry.net value is `math.log(1e6)`.
 -   `output_logodds_threshold`: Matches whose log-odds are larger than this value are immediately accepted (added to the solution matches). The default Astrometry.net value is `math.log(1e9)`.
 
-Accepted matches are always tuned up, even if they hit `tune_up_logodds_threshold` and were already tuned-up. Since log-odds are compared with the thresholds before the tune-up, the final log-odds are often significantly larger than `output_logodds_threshold`.
+Accepted matches are always tuned up, even if they hit `tune_up_logodds_threshold` and were already tuned-up. Since log-odds are compared with the thresholds before the tune-up, the final log-odds are often significantly larger than `output_logodds_threshold`. Set `tune_up_logodds_threshold` to a value larger than or equal to `output_logodds_threshold` to disable the first tune-up, and `None` to disable tune-up altogether. Tune-up logic is equivalent to the following Python snippet:
 
-Set `tune_up_logodds_threshold` to a value larger than or equal to `output_logodds_threshold` to disable the first tune-up.
+```py
+# This (pseudo-code) snippet assumes the following definitions:
+# match: candidate match object
+# log_odds: current match log-odds
+# add_to_solution: appends the match to the solution list
+# tune_up: tunes up a match object and returns the new match and the new log-odds
+if tune_up_logodds_threshold is None:
+    if log_odds >= output_logodds_threshold:
+        add_to_solution(match)
+else:
+    if log_odds >= output_logodds_threshold:
+        tuned_up_match, tuned_up_loggods = tune_up(match)
+        add_to_solution(tuned_up_match)
+    elif log_odds >= tune_up_logodds_threshold:
+        tuned_up_match, tuned_up_loggods = tune_up(match)
+        if tuned_up_loggods >= output_logodds_threshold:
+            tuned_up_twice_match, tuned_up_twice_loggods = tune_up(tuned_up_match)
+            add_to_solution(tuned_up_twice_match)
+```
 
 Astrometry.net gives the following description of the tune-up algorithm. See `tweak2` in _astrometry.net/solver/tweak2.c_ for the implementation.
 

@@ -94,7 +94,7 @@ class Solver(astrometry_extension.Solver):
         size_hint: typing.Optional[SizeHint],
         position_hint: typing.Optional[PositionHint],
         solve_id: typing.Optional[str],
-        tune_up_logodds_threshold: float,
+        tune_up_logodds_threshold: typing.Optional[float],
         output_logodds_threshold: float,
     ) -> Solution:
         with self.solve_id_lock:

@@ -402,17 +402,17 @@ static fitstable_t* get_tagalong(startree_t* star_tree) {
 }
 
 static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* args) {
-    PyObject* stars_xs;
-    PyObject* stars_ys;
+    PyObject* stars_xs = NULL;
+    PyObject* stars_ys = NULL;
     double scale_lower = 0.0;
     double scale_upper = 0.0;
     PyObject* position_hint;
     const char* solve_id;
-    double tune_up_logodds_threshold = 0.0;
+    PyObject* tune_up_logodds_threshold = NULL;
     double output_logodds_threshold = 0.0;
     if (!PyArg_ParseTuple(
             args,
-            "OOddOsdd",
+            "OOddOsOd",
             &stars_xs,
             &stars_ys,
             &scale_lower,
@@ -460,6 +460,18 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         if (PyErr_Occurred() || position_hint_radius < 0) {
             PyErr_Clear();
             PyErr_SetString(PyExc_TypeError, "position_hint_radius must be a float larger than 0");
+            return NULL;
+        }
+    }
+    const anbool has_tune_up = tune_up_logodds_threshold != Py_None;
+    double tune_up_logodds_threshold_value = 0.0;
+    if (has_tune_up) {
+        if (!PyFloat_Check(tune_up_logodds_threshold)) {
+            PyErr_SetString(PyExc_TypeError, "tune_up_logodds_threshold must be None or a float");
+            return NULL;
+        }
+        tune_up_logodds_threshold_value = PyFloat_AsDouble(tune_up_logodds_threshold);
+        if (PyErr_Occurred()) {
             return NULL;
         }
     }
@@ -537,12 +549,19 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     context.solver->fieldxy_orig = &starxy;
     context.solver->funits_lower = scale_lower;
     context.solver->funits_upper = scale_upper;
-    context.solver->logratio_toprint = MIN(tune_up_logodds_threshold, output_logodds_threshold);
-    context.solver->logratio_tokeep = output_logodds_threshold;
-    context.solver->logratio_totune = tune_up_logodds_threshold;
+    if (has_tune_up) {
+        context.solver->logratio_toprint = MIN(tune_up_logodds_threshold_value, output_logodds_threshold);
+        context.solver->logratio_tokeep = output_logodds_threshold;
+        context.solver->logratio_totune = tune_up_logodds_threshold_value;
+        context.solver->do_tweak = TRUE;
+    } else {
+        context.solver->logratio_toprint = output_logodds_threshold;
+        context.solver->logratio_tokeep = output_logodds_threshold;
+        context.solver->logratio_totune = output_logodds_threshold;
+        context.solver->do_tweak = FALSE;
+    }
     context.solver->record_match_callback = record_match_callback;
     context.solver->userdata = &context;
-    context.solver->do_tweak = TRUE;
     context.solver->timer_callback = timer_callback;
     if (has_position_hint) {
         solver_set_radec(context.solver, position_hint_ra, position_hint_dec, position_hint_radius);
@@ -647,37 +666,71 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
             add_wcs_field(wcs_fields, "EQUINOX", PyFloat_FromDouble(2000.0), "Equatorial coordinates definition (yr)");
             add_wcs_field(wcs_fields, "LONPOLE", PyFloat_FromDouble(180.0), "Native longitude of celestial pole (deg)");
             add_wcs_field(wcs_fields, "LATPOLE", PyFloat_FromDouble(0.0), "Native latitude of celestial pole (deg)");
-            add_wcs_field(wcs_fields, "CRVAL1", PyFloat_FromDouble(match->sip->wcstan.crval[0]), "RA of reference point");
-            add_wcs_field(wcs_fields, "CRVAL2", PyFloat_FromDouble(match->sip->wcstan.crval[1]), "DEC of reference point");
-            add_wcs_field(wcs_fields, "CRPIX1", PyFloat_FromDouble(match->sip->wcstan.crpix[0]), "X reference pixel");
-            add_wcs_field(wcs_fields, "CRPIX2", PyFloat_FromDouble(match->sip->wcstan.crpix[1]), "Y reference pixel");
-            add_wcs_field(wcs_fields, "CUNIT1", PyUnicode_FromString("deg"), "X pixel scale units");
-            add_wcs_field(wcs_fields, "CUNIT2", PyUnicode_FromString("deg"), "Y pixel scale units");
-            add_wcs_field(wcs_fields, "CD1_1", PyFloat_FromDouble(match->sip->wcstan.cd[0][0]), "Transformation matrix");
-            add_wcs_field(wcs_fields, "CD1_2", PyFloat_FromDouble(match->sip->wcstan.cd[0][1]), "Transformation matrix");
-            add_wcs_field(wcs_fields, "CD2_1", PyFloat_FromDouble(match->sip->wcstan.cd[1][0]), "Transformation matrix");
-            add_wcs_field(wcs_fields, "CD2_2", PyFloat_FromDouble(match->sip->wcstan.cd[1][1]), "Transformation matrix");
-            if (match->sip->wcstan.sin) {
-                add_wcs_field(wcs_fields, "CTYPE1", PyUnicode_FromString("RA---SIN-SIP"), "SIN projection + SIP distortions");
-                add_wcs_field(wcs_fields, "CTYPE2", PyUnicode_FromString("DEC--SIN-SIP"), "SIN projection + SIP distortions");
+            if (has_tune_up) {
+                add_wcs_field(wcs_fields, "CRVAL1", PyFloat_FromDouble(match->sip->wcstan.crval[0]), "RA of reference point");
+                add_wcs_field(wcs_fields, "CRVAL2", PyFloat_FromDouble(match->sip->wcstan.crval[1]), "DEC of reference point");
+                add_wcs_field(wcs_fields, "CRPIX1", PyFloat_FromDouble(match->sip->wcstan.crpix[0]), "X reference pixel");
+                add_wcs_field(wcs_fields, "CRPIX2", PyFloat_FromDouble(match->sip->wcstan.crpix[1]), "Y reference pixel");
+                add_wcs_field(wcs_fields, "CUNIT1", PyUnicode_FromString("deg"), "X pixel scale units");
+                add_wcs_field(wcs_fields, "CUNIT2", PyUnicode_FromString("deg"), "Y pixel scale units");
+                add_wcs_field(wcs_fields, "CD1_1", PyFloat_FromDouble(match->sip->wcstan.cd[0][0]), "Transformation matrix");
+                add_wcs_field(wcs_fields, "CD1_2", PyFloat_FromDouble(match->sip->wcstan.cd[0][1]), "Transformation matrix");
+                add_wcs_field(wcs_fields, "CD2_1", PyFloat_FromDouble(match->sip->wcstan.cd[1][0]), "Transformation matrix");
+                add_wcs_field(wcs_fields, "CD2_2", PyFloat_FromDouble(match->sip->wcstan.cd[1][1]), "Transformation matrix");
+                if (match->sip->wcstan.sin) {
+                    add_wcs_field(wcs_fields, "CTYPE1", PyUnicode_FromString("RA---SIN-SIP"), "SIN projection + SIP distortions");
+                    add_wcs_field(wcs_fields, "CTYPE2", PyUnicode_FromString("DEC--SIN-SIP"), "SIN projection + SIP distortions");
+                } else {
+                    add_wcs_field(
+                        wcs_fields,
+                        "CTYPE1",
+                        PyUnicode_FromString("RA---TAN-SIP"),
+                        "TAN (gnomonic) projection + SIP distortions");
+                    add_wcs_field(
+                        wcs_fields,
+                        "CTYPE2",
+                        PyUnicode_FromString("DEC--TAN-SIP"),
+                        "TAN (gnomonic) projection + SIP distortions");
+                }
+                add_wcs_field(wcs_fields, "A_ORDER", PyLong_FromLong(match->sip->a_order), "Polynomial order, axis 1");
+                add_wcs_sip_polynomial(
+                    wcs_fields, "A_%i_%i", match->sip->a_order, (double*)match->sip->a, "Polynomial coefficient, axis 1");
+                add_wcs_field(wcs_fields, "B_ORDER", PyLong_FromLong(match->sip->b_order), "Polynomial order, axis 2");
+                add_wcs_sip_polynomial(
+                    wcs_fields, "B_%i_%i", match->sip->b_order, (double*)match->sip->b, "Polynomial coefficient, axis 2");
+                add_wcs_field(wcs_fields, "AP_ORDER", PyLong_FromLong(match->sip->ap_order), "Inv polynomial order, axis 1");
+                add_wcs_sip_polynomial(
+                    wcs_fields, "AP_%i_%i", match->sip->ap_order, (double*)match->sip->ap, "Inv polynomial coefficient, axis 1");
+                add_wcs_field(wcs_fields, "BP_ORDER", PyLong_FromLong(match->sip->bp_order), "Inv polynomial order, axis 2");
+                add_wcs_sip_polynomial(
+                    wcs_fields, "BP_%i_%i", match->sip->bp_order, (double*)match->sip->bp, "Inv polynomial coefficient, axis 2");
             } else {
-                add_wcs_field(
-                    wcs_fields, "CTYPE1", PyUnicode_FromString("RA---TAN-SIP"), "TAN (gnomonic) projection + SIP distortions");
-                add_wcs_field(
-                    wcs_fields, "CTYPE2", PyUnicode_FromString("DEC--TAN-SIP"), "TAN (gnomonic) projection + SIP distortions");
+                add_wcs_field(wcs_fields, "CRVAL1", PyFloat_FromDouble(match->wcstan.crval[0]), "RA of reference point");
+                add_wcs_field(wcs_fields, "CRVAL2", PyFloat_FromDouble(match->wcstan.crval[1]), "DEC of reference point");
+                add_wcs_field(wcs_fields, "CRPIX1", PyFloat_FromDouble(match->wcstan.crpix[0]), "X reference pixel");
+                add_wcs_field(wcs_fields, "CRPIX2", PyFloat_FromDouble(match->wcstan.crpix[1]), "Y reference pixel");
+                add_wcs_field(wcs_fields, "CUNIT1", PyUnicode_FromString("deg"), "X pixel scale units");
+                add_wcs_field(wcs_fields, "CUNIT2", PyUnicode_FromString("deg"), "Y pixel scale units");
+                add_wcs_field(wcs_fields, "CD1_1", PyFloat_FromDouble(match->wcstan.cd[0][0]), "Transformation matrix");
+                add_wcs_field(wcs_fields, "CD1_2", PyFloat_FromDouble(match->wcstan.cd[0][1]), "Transformation matrix");
+                add_wcs_field(wcs_fields, "CD2_1", PyFloat_FromDouble(match->wcstan.cd[1][0]), "Transformation matrix");
+                add_wcs_field(wcs_fields, "CD2_2", PyFloat_FromDouble(match->wcstan.cd[1][1]), "Transformation matrix");
+                if (match->wcstan.sin) {
+                    add_wcs_field(wcs_fields, "CTYPE1", PyUnicode_FromString("RA---SIN-SIP"), "SIN projection + SIP distortions");
+                    add_wcs_field(wcs_fields, "CTYPE2", PyUnicode_FromString("DEC--SIN-SIP"), "SIN projection + SIP distortions");
+                } else {
+                    add_wcs_field(
+                        wcs_fields,
+                        "CTYPE1",
+                        PyUnicode_FromString("RA---TAN-SIP"),
+                        "TAN (gnomonic) projection + SIP distortions");
+                    add_wcs_field(
+                        wcs_fields,
+                        "CTYPE2",
+                        PyUnicode_FromString("DEC--TAN-SIP"),
+                        "TAN (gnomonic) projection + SIP distortions");
+                }
             }
-            add_wcs_field(wcs_fields, "A_ORDER", PyLong_FromLong(match->sip->a_order), "Polynomial order, axis 1");
-            add_wcs_sip_polynomial(
-                wcs_fields, "A_%i_%i", match->sip->a_order, (double*)match->sip->a, "Polynomial coefficient, axis 1");
-            add_wcs_field(wcs_fields, "B_ORDER", PyLong_FromLong(match->sip->b_order), "Polynomial order, axis 2");
-            add_wcs_sip_polynomial(
-                wcs_fields, "B_%i_%i", match->sip->b_order, (double*)match->sip->b, "Polynomial coefficient, axis 2");
-            add_wcs_field(wcs_fields, "AP_ORDER", PyLong_FromLong(match->sip->ap_order), "Inv polynomial order, axis 1");
-            add_wcs_sip_polynomial(
-                wcs_fields, "AP_%i_%i", match->sip->ap_order, (double*)match->sip->ap, "Inv polynomial coefficient, axis 1");
-            add_wcs_field(wcs_fields, "BP_ORDER", PyLong_FromLong(match->sip->bp_order), "Inv polynomial order, axis 2");
-            add_wcs_sip_polynomial(
-                wcs_fields, "BP_%i_%i", match->sip->bp_order, (double*)match->sip->bp, "Inv polynomial coefficient, axis 2");
             PyObject* python_match = PyTuple_New(8);
             PyTuple_SET_ITEM(python_match, 0, PyFloat_FromDouble(match->logodds));
             PyTuple_SET_ITEM(python_match, 1, PyFloat_FromDouble(ra));
@@ -688,7 +741,9 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
             PyTuple_SET_ITEM(python_match, 6, match_quad_stars);
             PyTuple_SET_ITEM(python_match, 7, wcs_fields);
             PyTuple_SET_ITEM(matches, index, python_match);
-            free(match->sip);
+            if (has_tune_up) {
+                free(match->sip);
+            }
             free(match->refradec);
             free(match->fieldxy);
             free(match->fieldxy_orig);
