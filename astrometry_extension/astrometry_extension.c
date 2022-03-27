@@ -159,10 +159,14 @@ static void match_vector_push(match_vector_t* match_vector, MatchObj* match) {
 typedef struct callback_context_t {
     const char* solve_id;
     PyThreadState* save;
+    PyObject* builtins_bool;
     PyObject* logging;
+    PyObject* logodds_callback;
+    PyObject* sorted_logodds_list;
     solver_t* solver;
     double output_logodds_threshold;
     match_vector_t matches;
+    anbool error_occured;
 } callback_context_t;
 
 static anbool record_match_callback(MatchObj* match, void* userdata) {
@@ -194,26 +198,6 @@ static anbool record_match_callback(MatchObj* match, void* userdata) {
         snprintf(ra_string, 24, "%g", ra);
         char dec_string[24];
         snprintf(dec_string, 24, "%g", dec);
-        PyEval_RestoreThread(context->save);
-        const int signal = PyErr_CheckSignals();
-        PyObject* message = PyUnicode_FromFormat(
-            "solve %s: logodds=%s, matches=%d, conflicts=%d, distractors=%d, "
-            "index=%d, ra=%s, dec=%s, scale=%s",
-            context->solve_id,
-            logodds_string,
-            match->nmatch,
-            match->nconflict,
-            match->ndistractor,
-            match->nindex,
-            ra_string,
-            dec_string,
-            scale_string);
-        PyObject_CallMethod(context->logging, "info", "O", message);
-        Py_DECREF(message);
-        context->save = PyEval_SaveThread();
-        if (signal != 0) {
-            context->solver->quit_now = TRUE;
-        }
         match_vector_push(&context->matches, match);
         match->theta = NULL;
         match->matchodds = NULL;
@@ -221,11 +205,71 @@ static anbool record_match_callback(MatchObj* match, void* userdata) {
         match->refxy = NULL;
         match->refstarid = NULL;
         match->testperm = NULL;
+        PyEval_RestoreThread(context->save);
+        PyObject* message = PyUnicode_FromFormat(
+            "solve %s: logodds=%s, matches=%d, conflicts=%d, distractors=%d, "
+            "index=%d, ra=%s, dec=%s, scale=%s",
+            context->solve_id,
+            logodds_string,
+            context->matches.data[context->matches.size - 1].nmatch,
+            context->matches.data[context->matches.size - 1].nconflict,
+            context->matches.data[context->matches.size - 1].ndistractor,
+            context->matches.data[context->matches.size - 1].nindex,
+            ra_string,
+            dec_string,
+            scale_string);
+        PyObject_CallMethod(context->logging, "info", "O", message);
+        Py_DECREF(message);
+        anbool inserted_or_error = FALSE;
+        for (Py_ssize_t index = 0; index < PyList_Size(context->sorted_logodds_list); ++index) {
+            const double value = PyFloat_AsDouble(PyList_GET_ITEM(context->sorted_logodds_list, index));
+            if (PyErr_Occurred()) {
+                inserted_or_error = TRUE;
+                break;
+            }
+            if (match->logodds > value) {
+                PyObject* logodds = PyFloat_FromDouble(match->logodds);
+                PyList_Insert(context->sorted_logodds_list, index, logodds);
+                Py_DECREF(logodds);
+                inserted_or_error = TRUE;
+                break;
+            }
+        }
+        if (!inserted_or_error) {
+            PyObject* logodds = PyFloat_FromDouble(match->logodds);
+            PyList_Append(context->sorted_logodds_list, logodds);
+            Py_DECREF(logodds);
+        }
+        if (PyErr_Occurred()) {
+            context->error_occured = TRUE;
+            context->solver->quit_now = TRUE;
+        } else {
+            PyObject* action = PyObject_CallFunction(context->logodds_callback, "O", context->sorted_logodds_list);
+            if (PyErr_Occurred()) {
+                context->error_occured = TRUE;
+                context->solver->quit_now = TRUE;
+            } else {
+                PyObject* action_as_boolean = PyObject_CallFunction(context->builtins_bool, "O", action);
+                if (PyErr_Occurred()) {
+                    context->error_occured = TRUE;
+                    context->solver->quit_now = TRUE;
+                } else if (action_as_boolean == Py_False) {
+                    context->solver->quit_now = TRUE;
+                }
+            }
+        }
+        const int signal = PyErr_CheckSignals();
+        context->save = PyEval_SaveThread();
+        if (signal != 0) {
+            context->error_occured = TRUE;
+            context->solver->quit_now = TRUE;
+        }
     } else {
         PyEval_RestoreThread(context->save);
         const int signal = PyErr_CheckSignals();
         context->save = PyEval_SaveThread();
         if (signal != 0) {
+            context->error_occured = TRUE;
             context->solver->quit_now = TRUE;
         }
     }
@@ -238,6 +282,7 @@ static time_t timer_callback(void* userdata) {
     const int signal = PyErr_CheckSignals();
     context->save = PyEval_SaveThread();
     if (signal != 0) {
+        context->error_occured = TRUE;
         context->solver->quit_now = TRUE;
     }
     return context->solver->quit_now ? 0 : 1;
@@ -410,9 +455,10 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     const char* solve_id;
     PyObject* tune_up_logodds_threshold = NULL;
     double output_logodds_threshold = 0.0;
+    PyObject* logodds_callback = NULL;
     if (!PyArg_ParseTuple(
             args,
-            "OOddOsOd",
+            "OOddOsOdO",
             &stars_xs,
             &stars_ys,
             &scale_lower,
@@ -420,7 +466,8 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
             &position_hint,
             &solve_id,
             &tune_up_logodds_threshold,
-            &output_logodds_threshold)) {
+            &output_logodds_threshold,
+            &logodds_callback)) {
         return NULL;
     }
     astrometry_extension_solver_t* current = (astrometry_extension_solver_t*)self;
@@ -492,6 +539,18 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         PyErr_SetString(PyExc_TypeError, "stars_xs cannot be empty");
         return NULL;
     }
+    PyObject* builtins = PyEval_GetBuiltins();
+    if (!builtins) {
+        return NULL;
+    }
+    PyObject* builtins_bool = PyDict_GetItemString(builtins, "bool");
+    if (!builtins_bool) {
+        return NULL;
+    }
+    PyObject* sorted_logodds_list = PyList_New(0);
+    if (!sorted_logodds_list) {
+        return NULL;
+    }
     PyObject* logging = PyImport_ImportModule("logging");
     if (!logging) {
         return NULL;
@@ -531,15 +590,20 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         starxy_free_data(&starxy);
         PyErr_Clear();
         PyErr_SetString(PyExc_TypeError, "items in stars_xs and stars_ys must be floats");
+        Py_DECREF(logging);
         return NULL;
     }
     callback_context_t context = {
-        solve_id,
-        PyEval_SaveThread(),
-        logging,
-        NULL,
-        output_logodds_threshold,
-        match_vector_with_capacity(8),
+        .solve_id = solve_id,
+        .save = PyEval_SaveThread(),
+        .builtins_bool = builtins_bool,
+        .logging = logging,
+        .logodds_callback = logodds_callback,
+        .sorted_logodds_list = sorted_logodds_list,
+        .solver = NULL,
+        .output_logodds_threshold = output_logodds_threshold,
+        .matches = match_vector_with_capacity(8),
+        .error_occured = FALSE,
     };
     context.solver = solver_new();
     context.solver->indexes = current->solver->indexes;
@@ -571,7 +635,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     context.solver->best_match.logodds = LARGE_VAL;
     solver_run(context.solver);
     PyEval_RestoreThread(context.save);
-    if (PyErr_Occurred() || context.solver->quit_now) {
+    if (PyErr_Occurred() || context.error_occured) {
         if (!PyErr_Occurred()) {
             PyErr_SetNone(PyExc_KeyboardInterrupt);
         }
@@ -579,6 +643,8 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         context.solver->fieldxy_orig = NULL;
         starxy_free_data(&starxy);
         solver_free(context.solver);
+        Py_DECREF(logging);
+        Py_DECREF(sorted_logodds_list);
         return NULL;
     }
     PyObject* result = NULL;
@@ -779,6 +845,8 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     context.solver->fieldxy_orig = NULL;
     starxy_free_data(&starxy);
     solver_free(context.solver);
+    Py_DECREF(logging);
+    Py_DECREF(sorted_logodds_list);
     return result;
 }
 

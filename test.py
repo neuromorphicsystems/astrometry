@@ -35,7 +35,6 @@ stars = [
     [592.1438288540525, 508.6376406353861],
 ]
 
-
 solution = solver.solve(
     stars_xs=[star[0] for star in stars],
     stars_ys=[star[1] for star in stars],
@@ -47,6 +46,7 @@ solution = solver.solve(
     solve_id=None,
     tune_up_logodds_threshold=14.0,
     output_logodds_threshold=21.0,
+    logodds_callback=lambda logodds_list: astrometry.Action.CONTINUE,
 )
 
 if solution.has_match():

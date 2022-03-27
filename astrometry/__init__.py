@@ -1,6 +1,7 @@
 from __future__ import annotations
 import astrometry_extension
 import dataclasses
+import enum
 import operator
 import pathlib
 import threading
@@ -81,6 +82,14 @@ class Solution:
         return self.matches[0]
 
 
+class Action(enum.Enum):
+    STOP = 0
+    CONTINUE = 1
+
+    def __bool__(self):
+        return self == Action.CONTINUE
+
+
 class Solver(astrometry_extension.Solver):
     def __init__(self, index_files: list[pathlib.Path]):
         super().__init__([str(path.resolve()) for path in index_files])
@@ -96,6 +105,7 @@ class Solver(astrometry_extension.Solver):
         solve_id: typing.Optional[str],
         tune_up_logodds_threshold: typing.Optional[float],
         output_logodds_threshold: float,
+        logodds_callback: typing.Callable[[list[float]], Action],
     ) -> Solution:
         with self.solve_id_lock:
             self.solve_id += 1
@@ -121,6 +131,7 @@ class Solver(astrometry_extension.Solver):
             solve_id,
             tune_up_logodds_threshold,
             output_logodds_threshold,
+            logodds_callback,
         )
         if raw_solution is None:
             return Solution(solve_id=solve_id, matches=[])
