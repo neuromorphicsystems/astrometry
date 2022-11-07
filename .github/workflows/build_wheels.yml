@@ -11,6 +11,8 @@ jobs:
                 os: [ubuntu-22.04, macos-11, macos-12]
         steps:
             - uses: actions/checkout@v3
+              with:
+                  submodules: true
             - name: Build wheels
               uses: pypa/cibuildwheel@v2.11.2
             - uses: actions/upload-artifact@v3

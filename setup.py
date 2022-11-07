@@ -24,9 +24,7 @@ sources = [
     "astrometry.net/gsl-an/block/init.c",
     *(
         str(path.as_posix())
-        for path in sorted(
-            (pathlib.Path("astrometry.net") / "gsl-an" / "cblas").iterdir()
-        )
+        for path in sorted((dirname / "astrometry.net" / "gsl-an" / "cblas").iterdir())
         if path.suffix == ".c" and path.name != "hypot.c"
     ),
     "astrometry.net/gsl-an/err/error.c",
