@@ -2,6 +2,7 @@ from __future__ import annotations
 import astrometry_extension
 import dataclasses
 import enum
+import math
 import operator
 import pathlib
 import threading
@@ -47,6 +48,57 @@ class PositionHint:
         assert self.radius_deg >= 0
 
 
+class Action(enum.IntEnum):
+    STOP = 0
+    CONTINUE = 1
+
+    def __bool__(self):
+        return self == Action.CONTINUE
+
+
+class Parity(enum.IntEnum):
+    NORMAL = 0
+    FLIP = 1
+    BOTH = 2
+
+
+@dataclasses.dataclass
+class SolutionParameters:
+    solve_id: typing.Optional[str] = None
+    uniformize_index: bool = True  # uniformize field stars at the matched index scale before verifying a match
+    deduplicate: bool = True  # de-duplicate field stars before verifying a match
+    sip_order: int = 3  # 0 means "no SIP distortion"
+    sip_inverse_order: int = 0  # 0 means "same as sip_order"
+    distance_from_quad_bonus: bool = True  # Assume that stars far from the matched quad will have larger positional variance?
+    positional_noise_pixels: float = 1.0
+    distractor_ratio: float = 0.25
+    code_tolerance_l2_distance: float = 0.01
+    minimum_quad_size_pixels: typing.Optional[
+        float
+    ] = None  # None means "use minimum_quad_size_fraction"
+    minimum_quad_size_fraction: float = 0.1
+    maximum_quad_size_pixels: float = 0.0  # 0.0 means "infinity"
+    maximum_quads: int = 0  # number of field quads to try, 0 means no limit
+    maximum_matches: int = 0  # number of quad matches to try, 0 means no limit
+    parity: Parity = Parity.BOTH
+    tune_up_logodds_threshold: typing.Optional[float] = 14.0  # None means "no tune-up"
+    output_logodds_threshold: float = 21.0
+    logodds_callback: typing.Callable[[list[float]], Action] = lambda _: Action.CONTINUE
+
+    def __post_init__(self):
+        assert self.sip_order >= 0
+        assert self.sip_inverse_order >= 0
+        assert self.positional_noise_pixels >= 0.0
+        assert self.distractor_ratio >= 0.0 and self.distractor_ratio <= 1.0
+        assert self.code_tolerance_l2_distance >= 0.0
+        assert (
+            self.minimum_quad_size_pixels is None
+            or self.minimum_quad_size_pixels >= 0.0
+        )
+        assert self.minimum_quad_size_fraction >= 0.0
+        assert self.maximum_quad_size_pixels >= 0.0
+
+
 @dataclasses.dataclass
 class Star:
     ra_deg: float
@@ -82,14 +134,6 @@ class Solution:
         return self.matches[0]
 
 
-class Action(enum.Enum):
-    STOP = 0
-    CONTINUE = 1
-
-    def __bool__(self):
-        return self == Action.CONTINUE
-
-
 class Solver(astrometry_extension.Solver):
     def __init__(self, index_files: list[pathlib.Path]):
         super().__init__([str(path.resolve()) for path in index_files])
@@ -102,20 +146,50 @@ class Solver(astrometry_extension.Solver):
         stars_ys: typing.Iterable[float],
         size_hint: typing.Optional[SizeHint],
         position_hint: typing.Optional[PositionHint],
-        solve_id: typing.Optional[str],
-        tune_up_logodds_threshold: typing.Optional[float],
-        output_logodds_threshold: float,
-        logodds_callback: typing.Callable[[list[float]], Action],
+        solution_parameters: SolutionParameters,
     ) -> Solution:
         with self.solve_id_lock:
             self.solve_id += 1
-        if solve_id is None:
-            solve_id = str(self.solve_id)
+        if not isinstance(stars_xs, list):
+            stars_xs = list(stars_xs)
+        if not isinstance(stars_ys, list):
+            stars_ys = list(stars_ys)
+        solve_id = (
+            str(self.solve_id)
+            if solution_parameters.solve_id is None
+            else solution_parameters.solve_id
+        )
         if size_hint is None:
             size_hint = SizeHint(
                 lower_arcsec_per_pixel=DEFAULT_LOWER_ARCSEC_PER_PIXEL,
                 upper_arcsec_per_pixel=DEFAULT_UPPER_ARCSEC_PER_PIXEL,
             )
+        if solution_parameters.minimum_quad_size_pixels is None:
+            star_x_minimum = math.inf
+            star_x_maximum = 0.0
+            for star_x in stars_xs:
+                star_x_minimum = min(star_x_minimum, star_x)
+                star_x_maximum = max(star_x_maximum, star_x)
+            star_y_minimum = math.inf
+            star_y_maximum = 0.0
+            for star_y in stars_ys:
+                star_y_minimum = min(star_y_minimum, star_y)
+                star_y_maximum = max(star_y_maximum, star_y)
+            extent = min(
+                star_x_maximum - star_x_minimum, star_y_maximum - star_y_minimum
+            )
+            if extent < 0.0:
+                minimum_quad_size_pixels = 0.0
+            else:
+                minimum_quad_size_pixels = (
+                    solution_parameters.minimum_quad_size_fraction * extent
+                )
+        else:
+            minimum_quad_size_pixels = solution_parameters.minimum_quad_size_pixels
+        assert (
+            solution_parameters.maximum_quad_size_pixels == 0.0
+            or minimum_quad_size_pixels < solution_parameters.maximum_quad_size_pixels
+        )
         raw_solution = super().solve(
             stars_xs if isinstance(stars_xs, list) else list(stars_xs),
             stars_ys if isinstance(stars_ys, list) else list(stars_ys),
@@ -129,9 +203,22 @@ class Solver(astrometry_extension.Solver):
                 position_hint.radius_deg,
             ),
             solve_id,
-            tune_up_logodds_threshold,
-            output_logodds_threshold,
-            logodds_callback,
+            solution_parameters.uniformize_index,
+            solution_parameters.deduplicate,
+            solution_parameters.sip_order,
+            solution_parameters.sip_inverse_order,
+            solution_parameters.distance_from_quad_bonus,
+            solution_parameters.positional_noise_pixels,
+            solution_parameters.distractor_ratio,
+            solution_parameters.code_tolerance_l2_distance,
+            minimum_quad_size_pixels,
+            solution_parameters.maximum_quad_size_pixels,
+            solution_parameters.maximum_quads,
+            solution_parameters.maximum_matches,
+            int(solution_parameters.parity),
+            solution_parameters.tune_up_logodds_threshold,
+            solution_parameters.output_logodds_threshold,
+            solution_parameters.logodds_callback,
         )
         if raw_solution is None:
             return Solution(solve_id=solve_id, matches=[])

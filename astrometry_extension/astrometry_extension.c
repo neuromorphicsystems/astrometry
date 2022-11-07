@@ -7,14 +7,14 @@
 #define LARGE_VAL 1e30
 
 typedef struct astrometry_extension_solver_t {
-    PyObject_HEAD solver_t* solver;
+    PyObject_HEAD pl* indexes;
 } astrometry_extension_solver_t;
 
 static void astrometry_extension_solver_dealloc(PyObject* self) {
     astrometry_extension_solver_t* current = (astrometry_extension_solver_t*)self;
-    if (current->solver) {
-        solver_free(current->solver);
-        current->solver = NULL;
+    if (current->indexes) {
+        pl_remove_all(current->indexes);
+        current->indexes = NULL;
     }
     Py_TYPE(self)->tp_free(self);
 }
@@ -37,7 +37,7 @@ static int astrometry_extension_solver_init(PyObject* self, PyObject* args, PyOb
         return -1;
     }
     astrometry_extension_solver_t* current = (astrometry_extension_solver_t*)self;
-    current->solver = solver_new();
+    current->indexes = pl_new(PyList_GET_SIZE(paths));
     for (Py_ssize_t path_index = 0; path_index < PyList_GET_SIZE(paths); ++path_index) {
         PyObject* path = PyList_GET_ITEM(paths, path_index);
         if (!PyUnicode_Check(path)) {
@@ -88,21 +88,25 @@ static int astrometry_extension_solver_init(PyObject* self, PyObject* args, PyOb
         index->circle = qfits_header_getboolean(index->codekd->header, "CIRCLE", 0);
         index->cx_less_than_dx = qfits_header_getboolean(index->codekd->header, "CXDX", FALSE);
         index->meanx_less_than_half = qfits_header_getboolean(index->codekd->header, "CXDXLT1", FALSE);
-        solver_add_index(current->solver, index);
+        pl_append(current->indexes, index);
     }
     if (PyErr_Occurred()) {
-        solver_free(current->solver);
-        current->solver = NULL;
+        if (current->indexes) {
+            pl_remove_all(current->indexes);
+            current->indexes = NULL;
+        }
         return -1;
     }
     PyObject* logging = PyImport_ImportModule("logging");
     if (!logging) {
-        solver_free(current->solver);
-        current->solver = NULL;
+        if (current->indexes) {
+            pl_remove_all(current->indexes);
+            current->indexes = NULL;
+        }
         return -1;
     }
-    PyObject* message = PyUnicode_FromFormat(
-        "loaded %d index file%s", pl_size(current->solver->indexes), pl_size(current->solver->indexes) > 1 ? "s" : "");
+    PyObject* message =
+        PyUnicode_FromFormat("loaded %d index file%s", pl_size(current->indexes), pl_size(current->indexes) > 1 ? "s" : "");
     PyObject_CallMethod(logging, "info", "O", message);
     Py_DECREF(message);
     return 0;
@@ -163,7 +167,7 @@ typedef struct callback_context_t {
     PyObject* logging;
     PyObject* logodds_callback;
     PyObject* sorted_logodds_list;
-    solver_t* solver;
+    solver_t solver;
     double output_logodds_threshold;
     match_vector_t matches;
     anbool error_occured;
@@ -172,19 +176,19 @@ typedef struct callback_context_t {
 static anbool record_match_callback(MatchObj* match, void* userdata) {
     callback_context_t* context = (callback_context_t*)userdata;
     verify_hit(
-        context->solver->index->starkd,
-        context->solver->index->cutnside,
+        context->solver.index->starkd,
+        context->solver.index->cutnside,
         match,
         match->sip,
-        context->solver->vf,
-        square(context->solver->verify_pix) + square(context->solver->index->index_jitter / match->scale),
-        context->solver->distractor_ratio,
-        context->solver->field_maxx,
-        context->solver->field_maxy,
-        context->solver->logratio_bail_threshold,
-        context->solver->logratio_tokeep,
-        context->solver->logratio_stoplooking,
-        context->solver->distance_from_quad_bonus,
+        context->solver.vf,
+        square(context->solver.verify_pix) + square(context->solver.index->index_jitter / match->scale),
+        context->solver.distractor_ratio,
+        context->solver.field_maxx,
+        context->solver.field_maxy,
+        context->solver.logratio_bail_threshold,
+        context->solver.logratio_tokeep,
+        context->solver.logratio_stoplooking,
+        context->solver.distance_from_quad_bonus,
         FALSE);
     if (match->logodds >= context->output_logodds_threshold) {
         double ra = 0.0;
@@ -242,19 +246,19 @@ static anbool record_match_callback(MatchObj* match, void* userdata) {
         }
         if (PyErr_Occurred()) {
             context->error_occured = TRUE;
-            context->solver->quit_now = TRUE;
+            context->solver.quit_now = TRUE;
         } else {
             PyObject* action = PyObject_CallFunction(context->logodds_callback, "O", context->sorted_logodds_list);
             if (PyErr_Occurred()) {
                 context->error_occured = TRUE;
-                context->solver->quit_now = TRUE;
+                context->solver.quit_now = TRUE;
             } else {
                 PyObject* action_as_boolean = PyObject_CallFunction(context->builtins_bool, "O", action);
                 if (PyErr_Occurred()) {
                     context->error_occured = TRUE;
-                    context->solver->quit_now = TRUE;
+                    context->solver.quit_now = TRUE;
                 } else if (action_as_boolean == Py_False) {
-                    context->solver->quit_now = TRUE;
+                    context->solver.quit_now = TRUE;
                 }
             }
         }
@@ -262,7 +266,7 @@ static anbool record_match_callback(MatchObj* match, void* userdata) {
         context->save = PyEval_SaveThread();
         if (signal != 0) {
             context->error_occured = TRUE;
-            context->solver->quit_now = TRUE;
+            context->solver.quit_now = TRUE;
         }
     } else {
         PyEval_RestoreThread(context->save);
@@ -270,7 +274,7 @@ static anbool record_match_callback(MatchObj* match, void* userdata) {
         context->save = PyEval_SaveThread();
         if (signal != 0) {
             context->error_occured = TRUE;
-            context->solver->quit_now = TRUE;
+            context->solver.quit_now = TRUE;
         }
     }
     return FALSE;
@@ -283,9 +287,9 @@ static time_t timer_callback(void* userdata) {
     context->save = PyEval_SaveThread();
     if (signal != 0) {
         context->error_occured = TRUE;
-        context->solver->quit_now = TRUE;
+        context->solver.quit_now = TRUE;
     }
-    return context->solver->quit_now ? 0 : 1;
+    return context->solver.quit_now ? 0 : 1;
 }
 
 static PyObject*
@@ -453,18 +457,44 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     double scale_upper = 0.0;
     PyObject* position_hint;
     const char* solve_id;
+    int uniformize_index = 0;
+    int deduplicate = 0;
+    int sip_order = 0;
+    int sip_inverse_order = 0;
+    int distance_from_quad_bonus = 0;
+    double positional_noise_pixels = 0.0;
+    double distractor_ratio = 0.0;
+    double code_tolerance_l2_distance = 0.0;
+    double minimum_quad_size_pixels = 0.0;
+    double maximum_quad_size_pixels = 0.0;
+    int maximum_quads = 0;
+    int maximum_matches = 0;
+    int parity = 0;
     PyObject* tune_up_logodds_threshold = NULL;
     double output_logodds_threshold = 0.0;
     PyObject* logodds_callback = NULL;
     if (!PyArg_ParseTuple(
             args,
-            "OOddOsOdO",
+            "OOddOsppiiidddddiiiOdO",
             &stars_xs,
             &stars_ys,
             &scale_lower,
             &scale_upper,
             &position_hint,
             &solve_id,
+            &uniformize_index,
+            &deduplicate,
+            &sip_order,
+            &sip_inverse_order,
+            &distance_from_quad_bonus,
+            &positional_noise_pixels,
+            &distractor_ratio,
+            &code_tolerance_l2_distance,
+            &minimum_quad_size_pixels,
+            &maximum_quad_size_pixels,
+            &maximum_quads,
+            &maximum_matches,
+            &parity,
             &tune_up_logodds_threshold,
             &output_logodds_threshold,
             &logodds_callback)) {
@@ -600,49 +630,107 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         .logging = logging,
         .logodds_callback = logodds_callback,
         .sorted_logodds_list = sorted_logodds_list,
-        .solver = NULL,
+        .solver =
+            {
+                // input fields
+                .indexes = current->indexes,
+                .fieldxy = NULL,
+                .pixel_xscale = 0.0,
+                .predistort = NULL,
+                .fieldxy_orig = &starxy,
+                .funits_lower = scale_lower,
+                .funits_upper = scale_upper,
+                .logratio_toprint =
+                    has_tune_up ? MIN(tune_up_logodds_threshold_value, output_logodds_threshold) : output_logodds_threshold,
+                .logratio_tokeep = output_logodds_threshold,
+                .logratio_totune = has_tune_up ? tune_up_logodds_threshold_value : output_logodds_threshold,
+                .record_match_callback = record_match_callback,
+                .userdata = NULL,
+                .distance_from_quad_bonus = distance_from_quad_bonus,
+                .verify_uniformize = uniformize_index,
+                .verify_dedup = deduplicate,
+                .do_tweak = has_tune_up,
+                .tweak_aborder = sip_order,
+                .tweak_abporder = sip_inverse_order == 0 ? sip_order : sip_inverse_order,
+                .verify_pix = positional_noise_pixels,
+                .distractor_ratio = distractor_ratio,
+                .codetol = code_tolerance_l2_distance,
+                .quadsize_min = minimum_quad_size_pixels,
+                .quadsize_max = maximum_quad_size_pixels,
+                .startobj = 0,
+                .endobj = 0,
+                .parity = parity,
+                .use_radec = FALSE,
+                .centerxyz = {0.0, 0.0, 0.0},
+                .r2 = 0.0,
+                .logratio_bail_threshold = -1000.0,
+                .logratio_stoplooking = LARGE_VAL,
+                .maxquads = maximum_quads,
+                .maxmatches = maximum_matches,
+                .set_crpix = FALSE,
+                .set_crpix_center = FALSE,
+                .crpix = {0.0, 0.0},
+                .mo_template = NULL,
+                .timer_callback = timer_callback,
+
+                // callback fields
+                .quit_now = FALSE,
+
+                // output fields
+                .numtries = 0,
+                .nummatches = 0,
+                .numscaleok = 0,
+                .last_examined_object = 0,
+                .num_cxdx_skipped = 0,
+                .num_meanx_skipped = 0,
+                .num_radec_skipped = 0,
+                .num_abscale_skipped = 0,
+                .num_verified = 0,
+
+                // internal fields
+                .index = NULL,
+                .minminAB2 = 0.0,
+                .maxmaxAB2 = 0.0,
+                .rel_index_noise2 = 0.0,
+                .rel_field_noise2 = 0.0,
+                .abscale_low = 0.0,
+                .abscale_high = 0.0,
+                .field_minx = 0.0,
+                .field_maxx = 0.0,
+                .field_miny = 0.0,
+                .field_maxy = 0.0,
+                .field_diag = 0.0,
+                .cxdx_margin = 0.0,
+                .starttime = 0.0,
+                .timeused = 0.0,
+                .best_logodds = 0.0,
+                .best_match = {0},
+                .best_index = NULL,
+                .best_match_solves = FALSE,
+                .have_best_match = FALSE,
+                .vf = NULL,
+            },
         .output_logodds_threshold = output_logodds_threshold,
         .matches = match_vector_with_capacity(8),
         .error_occured = FALSE,
     };
-    context.solver = solver_new();
-    context.solver->indexes = current->solver->indexes;
-    context.solver->fieldxy = NULL;
-    context.solver->pixel_xscale = 0.0;
-    context.solver->predistort = NULL;
-    context.solver->fieldxy_orig = &starxy;
-    context.solver->funits_lower = scale_lower;
-    context.solver->funits_upper = scale_upper;
-    if (has_tune_up) {
-        context.solver->logratio_toprint = MIN(tune_up_logodds_threshold_value, output_logodds_threshold);
-        context.solver->logratio_tokeep = output_logodds_threshold;
-        context.solver->logratio_totune = tune_up_logodds_threshold_value;
-        context.solver->do_tweak = TRUE;
-    } else {
-        context.solver->logratio_toprint = output_logodds_threshold;
-        context.solver->logratio_tokeep = output_logodds_threshold;
-        context.solver->logratio_totune = output_logodds_threshold;
-        context.solver->do_tweak = FALSE;
-    }
-    context.solver->record_match_callback = record_match_callback;
-    context.solver->userdata = &context;
-    context.solver->timer_callback = timer_callback;
+    context.solver.userdata = &context;
     if (has_position_hint) {
-        solver_set_radec(context.solver, position_hint_ra, position_hint_dec, position_hint_radius);
+        solver_set_radec(&context.solver, position_hint_ra, position_hint_dec, position_hint_radius);
     }
     // prevent best match copy before running the solver
-    context.solver->have_best_match = TRUE;
-    context.solver->best_match.logodds = LARGE_VAL;
-    solver_run(context.solver);
+    context.solver.have_best_match = TRUE;
+    context.solver.best_match.logodds = LARGE_VAL;
+    solver_run(&context.solver);
     PyEval_RestoreThread(context.save);
     if (PyErr_Occurred() || context.error_occured) {
         if (!PyErr_Occurred()) {
             PyErr_SetNone(PyExc_KeyboardInterrupt);
         }
-        context.solver->indexes = NULL;
-        context.solver->fieldxy_orig = NULL;
+        context.solver.indexes = NULL;
+        context.solver.fieldxy_orig = NULL;
         starxy_free_data(&starxy);
-        solver_free(context.solver);
+        solver_cleanup(&context.solver);
         Py_DECREF(logging);
         Py_DECREF(sorted_logodds_list);
         return NULL;
@@ -732,7 +820,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
             add_wcs_field(wcs_fields, "EQUINOX", PyFloat_FromDouble(2000.0), "Equatorial coordinates definition (yr)");
             add_wcs_field(wcs_fields, "LONPOLE", PyFloat_FromDouble(180.0), "Native longitude of celestial pole (deg)");
             add_wcs_field(wcs_fields, "LATPOLE", PyFloat_FromDouble(0.0), "Native latitude of celestial pole (deg)");
-            if (has_tune_up) {
+            if (match->sip != NULL && sip_order > 0) {
                 add_wcs_field(wcs_fields, "CRVAL1", PyFloat_FromDouble(match->sip->wcstan.crval[0]), "RA of reference point");
                 add_wcs_field(wcs_fields, "CRVAL2", PyFloat_FromDouble(match->sip->wcstan.crval[1]), "DEC of reference point");
                 add_wcs_field(wcs_fields, "CRPIX1", PyFloat_FromDouble(match->sip->wcstan.crpix[0]), "X reference pixel");
@@ -841,10 +929,10 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         result = Py_None;
     }
     match_vector_clear(&context.matches);
-    context.solver->indexes = NULL;
-    context.solver->fieldxy_orig = NULL;
+    context.solver.indexes = NULL;
+    context.solver.fieldxy_orig = NULL;
     starxy_free_data(&starxy);
-    solver_free(context.solver);
+    solver_cleanup(&context.solver);
     Py_DECREF(logging);
     Py_DECREF(sorted_logodds_list);
     return result;

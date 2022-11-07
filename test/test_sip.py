@@ -4,7 +4,7 @@ import logging
 logging.getLogger().setLevel(logging.INFO)
 
 solver = astrometry.Solver(
-    astrometry.series_5200_heavy.index_files(
+    astrometry.series_5200.index_files(
         cache_directory="astrometry_cache",
         scales={6},
     )
@@ -35,26 +35,25 @@ stars = [
     [592.1438288540525, 508.6376406353861],
 ]
 
-solution = solver.solve(
-    stars_xs=[star[0] for star in stars],
-    stars_ys=[star[1] for star in stars],
-    size_hint=astrometry.SizeHint(
-        lower_arcsec_per_pixel=1.0,
-        upper_arcsec_per_pixel=2.0,
-    ),
-    position_hint=astrometry.PositionHint(ra_deg=65.7, dec_deg=36.2, radius_deg=1.0),
-    solve_id=None,
-    tune_up_logodds_threshold=14.0,
-    output_logodds_threshold=21.0,
-    logodds_callback=lambda logodds_list: astrometry.Action.CONTINUE,
-)
-
-if solution.has_match():
-    for star in solution.best_match().stars:
-        print(star)
-else:
-    print(
-        "Astrometry could not find a match.",
-        "Reduce output_logodds_threshold in astrometry.Solver.solve,",
-        "or use another set of index files",
+for sip_order in range(0, 7):
+    print(f"{sip_order=}")
+    solution = solver.solve(
+        stars_xs=[star[0] for star in stars],
+        stars_ys=[star[1] for star in stars],
+        size_hint=astrometry.SizeHint(
+            lower_arcsec_per_pixel=1.0,
+            upper_arcsec_per_pixel=2.0,
+        ),
+        position_hint=astrometry.PositionHint(ra_deg=65.7, dec_deg=36.2, radius_deg=1.0),
+        solution_parameters=astrometry.SolutionParameters(
+            sip_order=sip_order,
+        ),
     )
+    if solution.has_match():
+        print(solution.best_match().wcs_fields)
+    else:
+        print(
+            "Astrometry could not find a match.",
+            "Reduce output_logodds_threshold in solution_parameters,",
+            "or use another set of index files",
+        )

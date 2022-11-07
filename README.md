@@ -1,26 +1,29 @@
 - [Astrometry](#astrometry)
 - [Get started](#get-started)
 - [Examples](#examples)
-  - [Provide size and position hints](#provide-size-and-position-hints)
-  - [Print progress information (download and solve)](#print-progress-information-download-and-solve)
-  - [Print field stars metadata](#print-field-stars-metadata)
-  - [Calculate field stars pixel positions with astropy](#calculate-field-stars-pixel-positions-with-astropy)
-  - [Print series description and size (without downloading them)](#print-series-description-and-size-without-downloading-them)
-  - [Stop the solver early using the log-odds callback](#stop-the-solver-early-using-the-log-odds-callback)
-    - [Return after the first match](#return-after-the-first-match)
-    - [Return early if the best log-odds are larger than 100.0](#return-early-if-the-best-log-odds-are-larger-than-1000)
-    - [Return early if there are at least ten matches](#return-early-if-there-are-at-least-ten-matches)
-    - [Return early if the three best matches are similar](#return-early-if-the-three-best-matches-are-similar)
+    - [Provide size and position hints](#provide-size-and-position-hints)
+    - [Print progress information (download and solve)](#print-progress-information-download-and-solve)
+    - [Print field stars metadata](#print-field-stars-metadata)
+    - [Calculate field stars pixel positions with astropy](#calculate-field-stars-pixel-positions-with-astropy)
+    - [Print series description and size (without downloading them)](#print-series-description-and-size-without-downloading-them)
+    - [Disable tune-up and distortion](#disable-tune-up-and-distortion)
+    - [Stop the solver early using the log-odds callback](#stop-the-solver-early-using-the-log-odds-callback)
+        - [Return after the first match](#return-after-the-first-match)
+        - [Return early if the best log-odds are larger than 100.0](#return-early-if-the-best-log-odds-are-larger-than-1000)
+        - [Return early if there are at least ten matches](#return-early-if-there-are-at-least-ten-matches)
+        - [Return early if the three best matches are similar](#return-early-if-the-three-best-matches-are-similar)
 - [Choosing series](#choosing-series)
 - [Documentation](#documentation)
-  - [Solver](#solver)
-  - [SizeHint](#sizehint)
-  - [PositionHint](#positionhint)
-  - [Action](#action)
-  - [Solution](#solution)
-  - [Match](#match)
-  - [Star](#star)
-  - [Series](#series)
+    - [Solver](#solver)
+    - [SizeHint](#sizehint)
+    - [PositionHint](#positionhint)
+    - [Action](#action)
+    - [Parity](#parity)
+    - [SolutionParameters](#solutionparameters)
+    - [Solution](#solution)
+    - [Match](#match)
+    - [Star](#star)
+    - [Series](#series)
 - [Contribute](#contribute)
 - [Publish](#publish)
 - [MSVC compatibility (work in progress)](#msvc-compatibility-work-in-progress)
@@ -76,10 +79,7 @@ solution = solver.solve(
     stars_ys=[star[1] for star in stars],
     size_hint=None,
     position_hint=None,
-    solve_id=None,
-    tune_up_logodds_threshold=14.0, # None disables tune-up (SIP distortion)
-    output_logodds_threshold=21.0,
-    logodds_callback=lambda logodds_list: astrometry.Action.CONTINUE
+    solution_parameters=astrometry.SolutionParameters(),
 )
 
 if solution.has_match():
@@ -110,10 +110,7 @@ solution = solver.solve(
         dec_deg=36.2,
         radius_deg=1.0,
     ),
-    solve_id=...,
-    tune_up_logodds_threshold=...,
-    output_logodds_threshold=...,
-    logodds_callback=...,
+    solution_parameters=...
 )
 ```
 
@@ -175,6 +172,24 @@ print(astrometry.series_5200_heavy.size_as_string({2, 3, 4}))
 
 See [Choosing Series](#choosing-series) for a list of available series.
 
+## Disable tune-up and distortion
+
+```py
+import astrometry
+
+solver = ...
+solution = solver.solve(
+    stars_xs=...,
+    stars_ys=...,
+    size_hint=...,
+    position_hint=...,
+    solution_parameters=astrometry.SolutionParameters(
+        sip_order=0,
+        tune_up_logodds_threshold=None,
+    ),
+)
+```
+
 ## Stop the solver early using the log-odds callback
 
 ### Return after the first match
@@ -188,10 +203,9 @@ solution = solver.solve(
     stars_ys=...,
     size_hint=...,
     position_hint=...,
-    solve_id=...,
-    tune_up_logodds_threshold=...,
-    output_logodds_threshold=...,
-    logodds_callback=lambda logodds_list: astrometry.Action.STOP,
+    solution_parameters=astrometry.SolutionParameters(
+        logodds_callback=lambda logodds_list: astrometry.Action.STOP,
+    ),
 )
 ```
 
@@ -206,13 +220,12 @@ solution = solver.solve(
     stars_ys=...,
     size_hint=...,
     position_hint=...,
-    solve_id=...,
-    tune_up_logodds_threshold=...,
-    output_logodds_threshold=...,
-    logodds_callback=lambda logodds_list: (
-        astrometry.Action.STOP
-        if logodds_list[0] > 100.0
-        else astrometry.Action.CONTINUE
+    solution_parameters=astrometry.SolutionParameters(
+        logodds_callback=lambda logodds_list: (
+            astrometry.Action.STOP
+            if logodds_list[0] > 100.0
+            else astrometry.Action.CONTINUE
+        ),
     ),
 )
 ```
@@ -228,13 +241,12 @@ solution = solver.solve(
     stars_ys=...,
     size_hint=...,
     position_hint=...,
-    solve_id=...,
-    tune_up_logodds_threshold=...,
-    output_logodds_threshold=...,
-    logodds_callback=lambda logodds_list: (
-        astrometry.Action.STOP
-        if len(logodds_list) >= 10.0
-        else astrometry.Action.CONTINUE
+    solution_parameters=astrometry.SolutionParameters(
+        logodds_callback=lambda logodds_list: (
+            astrometry.Action.STOP
+            if len(logodds_list) >= 10.0
+            else astrometry.Action.CONTINUE
+        ),
     ),
 )
 ```
@@ -258,10 +270,9 @@ solution = solver.solve(
     stars_ys=...,
     size_hint=...,
     position_hint=...,
-    solve_id=...,
-    tune_up_logodds_threshold=...,
-    output_logodds_threshold=...,
-    logodds_callback=loggods_callback,
+    solution_parameters=astrometry.SolutionParameters(
+        logodds_callback=logodds_callback,
+    ),
 )
 ```
 
@@ -334,10 +345,7 @@ class Solver:
         stars_ys: typing.Iterable[float],
         size_hint: typing.Optional[SizeHint],
         position_hint: typing.Optional[PositionHint],
-        solve_id: typing.Optional[str],
-        tune_up_logodds_threshold: typing.Optional[float],
-        output_logodds_threshold: float,
-        logodds_callback=typing.Callable[[list[float]], astrometry.Action],
+        solution_parameters: SolutionParameters,
     ) -> Solution: ...
 ```
 
@@ -348,38 +356,7 @@ class Solver:
 -   `star_ys`: Second pixel coordinate of the input stars, must have the same length as `star_xs`.
 -   `size_hint`: Optional angular pixel size range ([SizeHint](#sizehint)). Significantly speeds up `solve` when provided. If `size_hint` is `None`, the range `[0.1, 1000.0]` is used. This default range can be changed by setting `astrometry.DEFAULT_LOWER_ARCSEC_PER_PIXEL` and `astrometry.DEFAULT_UPPER_ARCSEC_PER_PIXEL` to other values.
 -   `position_hint`: Optional field center Ra/Dec coordinates and error radius ([PositionHint](#positionhint)). Significantly speeds up `solve` when provided. If `position_hint` is None, the entire sky is used (`radius_deg = 180.0`).
--   `solve_id`: Optional plate identifier used in logging messages. If `solve_id` is `None`, it is automatically assigned to a unique integer. The value can be retrieved from the Solution object (`solution.solve_id`).
--   `tune_up_logodds_threshold`: Matches whose log-odds are larger than this value are tuned-up (SIP distortion estimation) and accepted if their post-tune-up log-odds are larger than `output_logodds_threshold`. `None` disables tune-up and distortion estimation (SIP). The default Astrometry.net value is `math.log(1e6)`.
--   `output_logodds_threshold`: Matches whose log-odds are larger than this value are immediately accepted (added to the solution matches). The default Astrometry.net value is `math.log(1e9)`.
--   `logodds_callback`: User-provided function that takes a list of matches log-odds as parameter and returns an `astrometry.Action` object. `astrometry.Action.CONTINUE` tells the solver to keep searching for matches whereas `astrometry.Action.STOP` tells the solver to return the current matches immediately. The log-odds list is sorted from highest to lowest value and should not be modified by the callback function.
-
-Accepted matches are always tuned up, even if they hit `tune_up_logodds_threshold` and were already tuned-up. Since log-odds are compared with the thresholds before the tune-up, the final log-odds are often significantly larger than `output_logodds_threshold`. Set `tune_up_logodds_threshold` to a value larger than or equal to `output_logodds_threshold` to disable the first tune-up, and `None` to disable tune-up altogether. Tune-up logic is equivalent to the following Python snippet:
-
-```py
-# This (pseudo-code) snippet assumes the following definitions:
-# match: candidate match object
-# log_odds: current match log-odds
-# add_to_solution: appends the match to the solution list
-# tune_up: tunes up a match object and returns the new match and the new log-odds
-if tune_up_logodds_threshold is None:
-    if log_odds >= output_logodds_threshold:
-        add_to_solution(match)
-else:
-    if log_odds >= output_logodds_threshold:
-        tuned_up_match, tuned_up_loggods = tune_up(match)
-        add_to_solution(tuned_up_match)
-    elif log_odds >= tune_up_logodds_threshold:
-        tuned_up_match, tuned_up_loggods = tune_up(match)
-        if tuned_up_loggods >= output_logodds_threshold:
-            tuned_up_twice_match, tuned_up_twice_loggods = tune_up(tuned_up_match)
-            add_to_solution(tuned_up_twice_match)
-```
-
-Astrometry.net gives the following description of the tune-up algorithm. See `tweak2` in _astrometry.net/solver/tweak2.c_ for the implementation.
-
-> Given an initial WCS solution, compute SIP polynomial distortions using an annealing-like strategy. That is, it finds matches between image and reference catalog by searching within a radius, and that radius is small near a region of confidence, and grows as you move away. That makes it possible to pick up more distant matches, but they are downweighted in the fit. The annealing process reduces the slope of the growth of the matching radius with respect to the distance from the region of confidence.
->
-> -- _astrometry.net/include/astrometry/tweak2.h_
+-   `solution_parameters`: Advanced solver parameters ([SolutionParameters](#solutionparameters))
 
 ## SizeHint
 
@@ -415,6 +392,87 @@ class Action(enum.Enum):
     STOP = 0
     CONTINUE = 1
 ```
+
+## Parity
+
+```py
+class Parity(enum.IntEnum):
+    NORMAL = 0
+    FLIP = 1
+    BOTH = 2
+```
+
+## SolutionParameters
+
+```py
+@dataclasses.dataclass
+class SolutionParameters:
+    solve_id: typing.Optional[str] = None
+    uniformize_index: bool = True
+    deduplicate: bool = True
+    sip_order: int = 3
+    sip_inverse_order: int = 0
+    distance_from_quad_bonus: bool = True
+    positional_noise_pixels: float = 1.0
+    distractor_ratio: float = 0.25
+    code_tolerance_l2_distance: float = 0.01
+    minimum_quad_size_pixels: typing.Optional[float] = None
+    minimum_quad_size_fraction: float = 0.1
+    maximum_quad_size_pixels: float = 0.0
+    maximum_quads: int = 0
+    maximum_matches: int = 0
+    parity: Parity = Parity.BOTH
+    tune_up_logodds_threshold: typing.Optional[float] = 14.0
+    output_logodds_threshold: float = 21.0
+    logodds_callback: typing.Callable[[list[float]], Action] = lambda _: Action.CONTINUE
+```
+
+-   `solve_id`: Optional plate identifier used in logging messages. If `solve_id` is `None`, it is automatically assigned a unique integer. The value can be retrieved from the Solution object (`solution.solve_id`).
+-   `uniformize_index`: Uniformize field stars at the matched index scale before verifying a match.
+-   `deduplicate`: De-duplicate field stars before verifying a match.
+-   `sip_order`: Polynomial order of the Simple Imaging Polynomial distortion (see https://irsa.ipac.caltech.edu/data/SPITZER/docs/files/spitzer/shupeADASS.pdf). `0` disables SIP distortion.
+-   `sip_inverse_order`: Polynomial order of the inversee Simple Polynomial distortion. Usually equal to `sip_order`. `0` means "equal to `sip_order`".
+-   `distance_from_quad_bonus`: Assume that stars far from the matched quad will have larger positional variance.
+-   `positional_noise_pixels`: Expected error on the positions of stars.
+-   `distractor_ratio`: Fraction of distractors in the range `[0, 1]`.
+-   `code_tolerance_l2_distance`: Code tolerance in 4D codespace L2 distance.
+-   `minimum_quad_size_pixels`: Minimum size of field quads to try, `None` calculates the size automatically as `minimum_quad_size_fraction * min(Δx, Δy)`, where `Δx` (resp. `Δy`) is the maximum `x` distance (resp. `y` distance) between stars in the field.
+-   `minimum_quad_size_fraction`: Only used if `minimum_quad_size_pixels` is `None` (see above).
+-   `maximum_quad_size_pixels`: Maximum size of field quads to try, `0.0` means no limit.
+-   `maximum_quads`: Number of field quads to try, `0` means no limit.
+-   `maximum_matches`: Number of quad matches to try, `0` means no limit.
+-   `parity`: Parity.NORMAL does not flip the axes, Parity.FLIP does, and Parity.BOTH tries flipped and non-flipped axes (at the cost of doubling computations).
+-   `tune_up_logodds_threshold`: Matches whose log-odds are larger than this value are tuned-up (SIP distortion estimation) and accepted if their post-tune-up log-odds are larger than `output_logodds_threshold`. `None` disables tune-up and distortion estimation (SIP). The default Astrometry.net value is `math.log(1e6)`.
+-   `output_logodds_threshold`: Matches whose log-odds are larger than this value are immediately accepted (added to the solution matches). The default Astrometry.net value is `math.log(1e9)`.
+-   `logodds_callback`: User-provided function that takes a list of matches log-odds as parameter and returns an `astrometry.Action` object. `astrometry.Action.CONTINUE` tells the solver to keep searching for matches whereas `astrometry.Action.STOP` tells the solver to return the current matches immediately. The log-odds list is sorted from highest to lowest value and should not be modified by the callback function.
+
+Accepted matches are always tuned up, even if they hit `tune_up_logodds_threshold` and were already tuned-up. Since log-odds are compared with the thresholds before the tune-up, the final log-odds are often significantly larger than `output_logodds_threshold`. Set `tune_up_logodds_threshold` to a value larger than or equal to `output_logodds_threshold` to disable the first tune-up, and `None` to disable tune-up altogether. Tune-up logic is equivalent to the following Python snippet:
+
+```py
+# This (pseudo-code) snippet assumes the following definitions:
+# match: candidate match object
+# log_odds: current match log-odds
+# add_to_solution: appends the match to the solution list
+# tune_up: tunes up a match object and returns the new match and the new log-odds
+if tune_up_logodds_threshold is None:
+    if log_odds >= output_logodds_threshold:
+        add_to_solution(match)
+else:
+    if log_odds >= output_logodds_threshold:
+        tuned_up_match, tuned_up_loggods = tune_up(match)
+        add_to_solution(tuned_up_match)
+    elif log_odds >= tune_up_logodds_threshold:
+        tuned_up_match, tuned_up_loggods = tune_up(match)
+        if tuned_up_loggods >= output_logodds_threshold:
+            tuned_up_twice_match, tuned_up_twice_loggods = tune_up(tuned_up_match)
+            add_to_solution(tuned_up_twice_match)
+```
+
+Astrometry.net gives the following description of the tune-up algorithm. See `tweak2` in _astrometry.net/solver/tweak2.c_ for the implementation.
+
+> Given an initial WCS solution, compute SIP polynomial distortions using an annealing-like strategy. That is, it finds matches between image and reference catalog by searching within a radius, and that radius is small near a region of confidence, and grows as you move away. That makes it possible to pick up more distant matches, but they are downweighted in the fit. The annealing process reduces the slope of the growth of the matching radius with respect to the distance from the region of confidence.
+>
+> -- _astrometry.net/include/astrometry/tweak2.h_
 
 ## Solution
 
