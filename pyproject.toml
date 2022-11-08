@@ -1,3 +1,6 @@
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.cibuildwheel.linux]
+before-all = "if command -v apk &> /dev/null; then apk add bsd-compat-headers; fi"
