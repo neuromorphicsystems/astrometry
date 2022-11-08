@@ -592,33 +592,7 @@ python3 -m pip install -e .
 
 1. Bump the version number in _setup.py_.
 
-2. Remove previous wheels
-
-```sh
-rm -rf wheels
-```
-
-3. Install Cubuzoa in a different directory (https://github.com/neuromorphicsystems/cubuzoa) to build pre-compiled versions for all major operating systems. Cubuzoa depends on VirtualBox (with its extension pack) and requires about 75 GB of free disk space.
-
-```sh
-cd cubuzoa
-python3 -m cubuzoa provision --os '(linux|macos)'
-python3 -m cubuzoa build --os '(linux|macos)' --pre /path/to/astrometry/prebuild.py /path/to/astrometry
-```
-
-3. Install twine
-
-```sh
-python3 -m pip install twine
-```
-
-4. Upload the compiled wheels and the source code to PyPI:
-
-```sh
-python3 prebuild.py
-python3 setup.py sdist --dist-dir wheels
-python3 -m twine upload wheels/*
-```
+2. Create a new release on GitHub.
 
 # MSVC compatibility (work in progress)
 
