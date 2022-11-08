@@ -2,6 +2,10 @@ name: Build
 
 on: [push, pull_request]
 
+env:
+    CIBW_ARCHS_MACOS: x86_64 arm64
+    CIBW_BEFORE_BUILD_LINUX: "if command -v apk &> /dev/null; then apk add bsd-compat-headers; fi"
+
 jobs:
     build_wheels:
         name: Build wheels on ${{ matrix.os }}
