@@ -2,6 +2,8 @@
 #include "mathutil.h"
 #include "solver.h"
 #include <Python.h>
+#include <libgen.h>
+#include <string.h>
 #include <structmember.h>
 
 #define LARGE_VAL 1e30
@@ -209,21 +211,38 @@ static anbool record_match_callback(MatchObj* match, void* userdata) {
         match->refxy = NULL;
         match->refstarid = NULL;
         match->testperm = NULL;
+        char* index_directory_name = NULL;
+        {
+            char* match_indexname = strdup(match->index->indexname);
+            char* index_directory = strdup(dirname(match_indexname));
+            free(match_indexname);
+            index_directory_name = strdup(basename(index_directory));
+            free(index_directory);
+        }
+        char* index_name = NULL;
+        {
+            char* match_indexname = strdup(match->index->indexname);
+            index_name = strdup(basename(match_indexname));
+            free(match_indexname);
+        }
         PyEval_RestoreThread(context->save);
         PyObject* message = PyUnicode_FromFormat(
             "solve %s: logodds=%s, matches=%d, conflicts=%d, distractors=%d, "
-            "index=%d, ra=%s, dec=%s, scale=%s",
+            "ra=%s, dec=%s, scale=%s, index=%s/%s",
             context->solve_id,
             logodds_string,
             context->matches.data[context->matches.size - 1].nmatch,
             context->matches.data[context->matches.size - 1].nconflict,
             context->matches.data[context->matches.size - 1].ndistractor,
-            context->matches.data[context->matches.size - 1].nindex,
             ra_string,
             dec_string,
-            scale_string);
+            scale_string,
+            index_directory_name,
+            index_name);
         PyObject_CallMethod(context->logging, "info", "O", message);
         Py_DECREF(message);
+        free(index_directory_name);
+        free(index_name);
         anbool inserted_or_error = FALSE;
         for (Py_ssize_t index = 0; index < PyList_Size(context->sorted_logodds_list); ++index) {
             const double value = PyFloat_AsDouble(PyList_GET_ITEM(context->sorted_logodds_list, index));
@@ -581,8 +600,29 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     if (!sorted_logodds_list) {
         return NULL;
     }
+
+    // filter index files using the position and scale hints
+    pl* selected_indexes = pl_new(16);
+    double maximum_quad_size_arcsec = maximum_quad_size_pixels == 0.0 ? LARGE_VAL : maximum_quad_size_pixels * scale_upper;
+    for (size_t position = 0; position < pl_size(current->indexes); ++position) {
+        index_t* index = pl_get(current->indexes, position);
+        if (index_overlaps_scale_range(index, minimum_quad_size_pixels * scale_lower, maximum_quad_size_arcsec)) {
+            if (!has_position_hint
+                || (has_position_hint
+                    && index_is_within_range(index, position_hint_ra, position_hint_dec, position_hint_radius))) {
+                pl_append(selected_indexes, index);
+            }
+        }
+    }
+
+    if (pl_size(selected_indexes) == 0) {
+        PyErr_SetString(PyExc_TypeError, "index files do not overlap the provided position and scale hints");
+        pl_remove_all(selected_indexes);
+        return NULL;
+    }
     PyObject* logging = PyImport_ImportModule("logging");
     if (!logging) {
+        pl_remove_all(selected_indexes);
         return NULL;
     }
     {
@@ -620,6 +660,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         starxy_free_data(&starxy);
         PyErr_Clear();
         PyErr_SetString(PyExc_TypeError, "items in stars_xs and stars_ys must be floats");
+        pl_remove_all(selected_indexes);
         Py_DECREF(logging);
         return NULL;
     }
@@ -633,7 +674,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         .solver =
             {
                 // input fields
-                .indexes = current->indexes,
+                .indexes = selected_indexes,
                 .fieldxy = NULL,
                 .pixel_xscale = 0.0,
                 .predistort = NULL,
@@ -731,6 +772,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         context.solver.fieldxy_orig = NULL;
         starxy_free_data(&starxy);
         solver_cleanup(&context.solver);
+        pl_remove_all(selected_indexes);
         Py_DECREF(logging);
         Py_DECREF(sorted_logodds_list);
         return NULL;
@@ -933,6 +975,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     context.solver.fieldxy_orig = NULL;
     starxy_free_data(&starxy);
     solver_cleanup(&context.solver);
+    pl_remove_all(selected_indexes);
     Py_DECREF(logging);
     Py_DECREF(sorted_logodds_list);
     return result;

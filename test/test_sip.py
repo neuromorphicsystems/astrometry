@@ -1,11 +1,12 @@
 import astrometry
 import logging
+import pathlib
 
 logging.getLogger().setLevel(logging.INFO)
 
 solver = astrometry.Solver(
     astrometry.series_5200.index_files(
-        cache_directory="astrometry_cache",
+        cache_directory=pathlib.Path(__file__).resolve().parent / "astrometry_cache",
         scales={6},
     )
 )
@@ -44,7 +45,9 @@ for sip_order in range(0, 7):
             lower_arcsec_per_pixel=1.0,
             upper_arcsec_per_pixel=2.0,
         ),
-        position_hint=astrometry.PositionHint(ra_deg=65.7, dec_deg=36.2, radius_deg=1.0),
+        position_hint=astrometry.PositionHint(
+            ra_deg=65.7, dec_deg=36.2, radius_deg=1.0
+        ),
         solution_parameters=astrometry.SolutionParameters(
             sip_order=sip_order,
         ),

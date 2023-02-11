@@ -53,6 +53,7 @@ def run(session: requests.Session, task: tuple[str, pathlib.Path, pathlib.Path])
         for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
             download_file.write(chunk)
     response.close()
+    response.raise_for_status()
     download_path.rename(path)
 
 

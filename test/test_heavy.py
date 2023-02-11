@@ -1,11 +1,12 @@
 import astrometry
 import logging
+import pathlib
 
 logging.getLogger().setLevel(logging.INFO)
 
 solver = astrometry.Solver(
     astrometry.series_5200_heavy.index_files(
-        cache_directory="astrometry_cache",
+        cache_directory=pathlib.Path(__file__).resolve().parent / "astrometry_cache",
         scales={6},
     )
 )
