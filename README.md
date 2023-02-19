@@ -24,6 +24,8 @@
     - [Match](#match)
     - [Star](#star)
     - [Series](#series)
+    - [batches\_generator](#batches_generator)
+    - [SupportsFloatMapping](#supportsfloatmapping)
 - [Contribute](#contribute)
 - [Publish](#publish)
 - [MSVC compatibility (work in progress)](#msvc-compatibility-work-in-progress)
@@ -75,8 +77,7 @@ stars = [
 ]
 
 solution = solver.solve(
-    stars_xs=[star[0] for star in stars],
-    stars_ys=[star[1] for star in stars],
+    stars=stars,
     size_hint=None,
     position_hint=None,
     solution_parameters=astrometry.SolutionParameters(),
@@ -99,8 +100,7 @@ import astrometry
 
 solver = ...
 solution = solver.solve(
-    stars_xs=...,
-    stars_ys=...,
+    stars=...,
     size_hint=astrometry.SizeHint(
         lower_arcsec_per_pixel=1.0,
         upper_arcsec_per_pixel=2.0,
@@ -179,8 +179,7 @@ import astrometry
 
 solver = ...
 solution = solver.solve(
-    stars_xs=...,
-    stars_ys=...,
+    stars=...,
     size_hint=...,
     position_hint=...,
     solution_parameters=astrometry.SolutionParameters(
@@ -199,8 +198,7 @@ import astrometry
 
 solver = ...
 solution = solver.solve(
-    stars_xs=...,
-    stars_ys=...,
+    stars=...,
     size_hint=...,
     position_hint=...,
     solution_parameters=astrometry.SolutionParameters(
@@ -216,8 +214,7 @@ import astrometry
 
 solver = ...
 solution = solver.solve(
-    stars_xs=...,
-    stars_ys=...,
+    stars=...,
     size_hint=...,
     position_hint=...,
     solution_parameters=astrometry.SolutionParameters(
@@ -237,8 +234,7 @@ import astrometry
 
 solver = ...
 solution = solver.solve(
-    stars_xs=...,
-    stars_ys=...,
+    stars=...,
     size_hint=...,
     position_hint=...,
     solution_parameters=astrometry.SolutionParameters(
@@ -266,8 +262,7 @@ def logodds_callback(logodds_list: list[float]) -> astrometry.Action:
 
 solver = ...
 solution = solver.solve(
-    stars_xs=...,
-    stars_ys=...,
+    stars=...,
     size_hint=...,
     position_hint=...,
     solution_parameters=astrometry.SolutionParameters(
@@ -341,8 +336,7 @@ class Solver:
 
     def solve(
         self,
-        stars_xs: typing.Iterable[float],
-        stars_ys: typing.Iterable[float],
+        stars: typing.Iterable[SupportsFloatMapping],
         size_hint: typing.Optional[SizeHint],
         position_hint: typing.Optional[PositionHint],
         solution_parameters: SolutionParameters,
@@ -352,8 +346,7 @@ class Solver:
 `solve` is thread-safe and can be called any number of times.
 
 -   `index_files`: List of index files to use for solving. The list need not come from a `Series` object. Series subsets and combinations are possible as well.
--   `star_xs`: First pixel coordinate of the input stars.
--   `star_ys`: Second pixel coordinate of the input stars, must have the same length as `star_xs`.
+-   `star`: iterator over a list of pixel coordinates for the input stars.
 -   `size_hint`: Optional angular pixel size range ([SizeHint](#sizehint)). Significantly speeds up `solve` when provided. If `size_hint` is `None`, the range `[0.1, 1000.0]` is used. This default range can be changed by setting `astrometry.DEFAULT_LOWER_ARCSEC_PER_PIXEL` and `astrometry.DEFAULT_UPPER_ARCSEC_PER_PIXEL` to other values.
 -   `position_hint`: Optional field center Ra/Dec coordinates and error radius ([PositionHint](#positionhint)). Significantly speeds up `solve` when provided. If `position_hint` is None, the entire sky is used (`radius_deg = 180.0`).
 -   `solution_parameters`: Advanced solver parameters ([SolutionParameters](#solutionparameters))
@@ -424,17 +417,18 @@ class SolutionParameters:
     parity: Parity = Parity.BOTH
     tune_up_logodds_threshold: typing.Optional[float] = 14.0
     output_logodds_threshold: float = 21.0
+    slices_generator: typing.Callable[[int], typing.Iterable[tuple[int, int]]] = astrometry.batches_generator(25)
     logodds_callback: typing.Callable[[list[float]], Action] = lambda _: Action.CONTINUE
 ```
 
 -   `solve_id`: Optional plate identifier used in logging messages. If `solve_id` is `None`, it is automatically assigned a unique integer. The value can be retrieved from the Solution object (`solution.solve_id`).
 -   `uniformize_index`: Uniformize field stars at the matched index scale before verifying a match.
 -   `deduplicate`: De-duplicate field stars before verifying a match.
--   `sip_order`: Polynomial order of the Simple Imaging Polynomial distortion (see https://irsa.ipac.caltech.edu/data/SPITZER/docs/files/spitzer/shupeADASS.pdf). `0` disables SIP distortion.
+-   `sip_order`: Polynomial order of the Simple Imaging Polynomial distortion (see https://irsa.ipac.caltech.edu/data/SPITZER/docs/files/spitzer/shupeADASS.pdf). `0` disables SIP distortion. `tune_up_logodds_threshold` must be `None` if `sip_order` is `0`.
 -   `sip_inverse_order`: Polynomial order of the inversee Simple Polynomial distortion. Usually equal to `sip_order`. `0` means "equal to `sip_order`".
 -   `distance_from_quad_bonus`: Assume that stars far from the matched quad will have larger positional variance.
 -   `positional_noise_pixels`: Expected error on the positions of stars.
--   `distractor_ratio`: Fraction of distractors in the range `[0, 1]`.
+-   `distractor_ratio`: Fraction of distractors in the range `]0, 1]`.
 -   `code_tolerance_l2_distance`: Code tolerance in 4D codespace L2 distance.
 -   `minimum_quad_size_pixels`: Minimum size of field quads to try, `None` calculates the size automatically as `minimum_quad_size_fraction * min(Δx, Δy)`, where `Δx` (resp. `Δy`) is the maximum `x` distance (resp. `y` distance) between stars in the field.
 -   `minimum_quad_size_fraction`: Only used if `minimum_quad_size_pixels` is `None` (see above).
@@ -444,6 +438,7 @@ class SolutionParameters:
 -   `parity`: Parity.NORMAL does not flip the axes, Parity.FLIP does, and Parity.BOTH tries flipped and non-flipped axes (at the cost of doubling computations).
 -   `tune_up_logodds_threshold`: Matches whose log-odds are larger than this value are tuned-up (SIP distortion estimation) and accepted if their post-tune-up log-odds are larger than `output_logodds_threshold`. `None` disables tune-up and distortion estimation (SIP). The default Astrometry.net value is `math.log(1e6)`.
 -   `output_logodds_threshold`: Matches whose log-odds are larger than this value are immediately accepted (added to the solution matches). The default Astrometry.net value is `math.log(1e9)`.
+-   `slices_generator`: User-provided function that takes a number of stars as parameter and returns an iterable (such as list) of two-elements tuples representing ranges. The first tuple item (start) is included while the second tuple item (end) is not. The returned ranges can have a variable size and/or overlap. The algorithm compares each range with the star catalogue sequentially. Small ranges significantly speed up the algorithm but increase the odds of missing matches. `astrometry.batches_generator(n)` generates non-overlapping batches of `n` stars.
 -   `logodds_callback`: User-provided function that takes a list of matches log-odds as parameter and returns an `astrometry.Action` object. `astrometry.Action.CONTINUE` tells the solver to keep searching for matches whereas `astrometry.Action.STOP` tells the solver to return the current matches immediately. The log-odds list is sorted from highest to lowest value and should not be modified by the callback function.
 
 Accepted matches are always tuned up, even if they hit `tune_up_logodds_threshold` and were already tuned-up. Since log-odds are compared with the thresholds before the tune-up, the final log-odds are often significantly larger than `output_logodds_threshold`. Set `tune_up_logodds_threshold` to a value larger than or equal to `output_logodds_threshold` to disable the first tune-up, and `None` to disable tune-up altogether. Tune-up logic is equivalent to the following Python snippet:
@@ -557,6 +552,27 @@ class Series:
 -   `index_files` returns index files paths for the given scales (or all available scales if `scales` is `None`). This function downloads files that are not already in the cache directory. `cache_directory` is created if it does not exist. Download automatically resumes for partially downloaded files.
 
 Change the constants `astrometry.CHUNK_SIZE`, `astrometry.DOWNLOAD_SUFFIX` and `astrometry.TIMEOUT` to configure the downloader parameters.
+
+## batches_generator
+
+```py
+def batches_generator(
+    batch_size: int,
+) -> typing.Callable[[int], typing.Iterable[tuple[int, int]]]:
+    ...
+```
+
+- `batch_size` sets the size of the generated batches.
+
+`batches_generator` returns a slices generator compatible with `SolutionParameters.slices_generator`. The slices are non-overlapping and non-full slices are ignored. For instance, a batch size of `25` over `83` stars would generate the slices `(0, 25)`, `(25, 50)`, and `(50, 75)`.
+
+## SupportsFloatMapping
+
+```py
+class SupportsFloatMapping(typing.Protocol):
+    def __getitem__(self, index: typing.SupportsIndex, /) -> typing.SupportsFloat:
+        ...
+```
 
 # Contribute
 

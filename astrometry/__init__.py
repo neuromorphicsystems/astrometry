@@ -25,6 +25,11 @@ DEFAULT_LOWER_ARCSEC_PER_PIXEL = 0.1
 DEFAULT_UPPER_ARCSEC_PER_PIXEL = 1000.0
 
 
+class SupportsFloatMapping(typing.Protocol):
+    def __getitem__(self, index: typing.SupportsIndex, /) -> typing.SupportsFloat:
+        ...
+
+
 @dataclasses.dataclass
 class SizeHint:
     lower_arcsec_per_pixel: float
@@ -62,6 +67,18 @@ class Parity(enum.IntEnum):
     BOTH = 2
 
 
+def batches_generator(
+    batch_size: int,
+) -> typing.Callable[[int], typing.Iterable[tuple[int, int]]]:
+    def slices_generator(stars_count: int) -> typing.Iterable[tuple[int, int]]:
+        if stars_count < batch_size:
+            yield (0, stars_count)
+        for start in range(0, stars_count - batch_size + 1, batch_size):
+            yield (start, start + batch_size)
+
+    return slices_generator
+
+
 @dataclasses.dataclass
 class SolutionParameters:
     solve_id: typing.Optional[str] = None
@@ -83,13 +100,16 @@ class SolutionParameters:
     parity: Parity = Parity.BOTH
     tune_up_logodds_threshold: typing.Optional[float] = 14.0  # None means "no tune-up"
     output_logodds_threshold: float = 21.0
+    slices_generator: typing.Callable[
+        [int], typing.Iterable[tuple[int, int]]
+    ] = batches_generator(25)
     logodds_callback: typing.Callable[[list[float]], Action] = lambda _: Action.CONTINUE
 
     def __post_init__(self):
         assert self.sip_order >= 0
         assert self.sip_inverse_order >= 0
         assert self.positional_noise_pixels >= 0.0
-        assert self.distractor_ratio >= 0.0 and self.distractor_ratio <= 1.0
+        assert self.distractor_ratio > 0.0 and self.distractor_ratio <= 1.0
         assert self.code_tolerance_l2_distance >= 0.0
         assert (
             self.minimum_quad_size_pixels is None
@@ -97,6 +117,7 @@ class SolutionParameters:
         )
         assert self.minimum_quad_size_fraction >= 0.0
         assert self.maximum_quad_size_pixels >= 0.0
+        assert self.sip_order > 0 or self.tune_up_logodds_threshold is None
 
 
 @dataclasses.dataclass
@@ -142,18 +163,28 @@ class Solver(astrometry_extension.Solver):
 
     def solve(
         self,
-        stars_xs: typing.Iterable[float],
-        stars_ys: typing.Iterable[float],
+        stars: typing.Iterable[SupportsFloatMapping],
         size_hint: typing.Optional[SizeHint],
         position_hint: typing.Optional[PositionHint],
         solution_parameters: SolutionParameters,
     ) -> Solution:
         with self.solve_id_lock:
             self.solve_id += 1
-        if not isinstance(stars_xs, list):
-            stars_xs = list(stars_xs)
-        if not isinstance(stars_ys, list):
-            stars_ys = list(stars_ys)
+
+        stars_xs: list[float] = []
+        stars_ys: list[float] = []
+        for star in stars:
+            stars_xs.append(float(star[0]))
+            stars_ys.append(float(star[1]))
+        slices_starts: list[int] = []
+        slices_ends: list[int] = []
+        for star_slice in solution_parameters.slices_generator(len(stars_xs)):
+            assert star_slice[0] >= 0
+            assert star_slice[1] <= len(stars_xs)
+            assert star_slice[0] < star_slice[1]
+            slices_starts.append(star_slice[0])
+            slices_ends.append(star_slice[1])
+        assert len(slices_starts) > 0
         solve_id = (
             str(self.solve_id)
             if solution_parameters.solve_id is None
@@ -218,6 +249,8 @@ class Solver(astrometry_extension.Solver):
             int(solution_parameters.parity),
             solution_parameters.tune_up_logodds_threshold,
             solution_parameters.output_logodds_threshold,
+            slices_starts,
+            slices_ends,
             solution_parameters.logodds_callback,
         )
         if raw_solution is None:

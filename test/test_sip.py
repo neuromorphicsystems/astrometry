@@ -39,8 +39,7 @@ stars = [
 for sip_order in range(0, 7):
     print(f"{sip_order=}")
     solution = solver.solve(
-        stars_xs=[star[0] for star in stars],
-        stars_ys=[star[1] for star in stars],
+        stars=stars,
         size_hint=astrometry.SizeHint(
             lower_arcsec_per_pixel=1.0,
             upper_arcsec_per_pixel=2.0,
@@ -50,6 +49,7 @@ for sip_order in range(0, 7):
         ),
         solution_parameters=astrometry.SolutionParameters(
             sip_order=sip_order,
+            tune_up_logodds_threshold=None if sip_order == 0 else 14.0,
         ),
     )
     if solution.has_match():

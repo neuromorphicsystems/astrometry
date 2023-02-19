@@ -38,8 +38,7 @@ stars = [
 
 print("Solve with default parameters")
 solution = solver.solve(
-    stars_xs=[star[0] for star in stars],
-    stars_ys=[star[1] for star in stars],
+    stars=stars,
     size_hint=astrometry.SizeHint(
         lower_arcsec_per_pixel=1.0,
         upper_arcsec_per_pixel=2.0,

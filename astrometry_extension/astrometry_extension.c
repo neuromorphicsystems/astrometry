@@ -1,12 +1,4 @@
-#include "fitsioutils.h"
-#include "mathutil.h"
-#include "solver.h"
-#include <Python.h>
-#include <libgen.h>
-#include <string.h>
-#include <structmember.h>
-
-#define LARGE_VAL 1e30
+#include "astrometry_extension_utilities.h"
 
 typedef struct astrometry_extension_solver_t {
     PyObject_HEAD pl* indexes;
@@ -108,365 +100,10 @@ static int astrometry_extension_solver_init(PyObject* self, PyObject* args, PyOb
         return -1;
     }
     PyObject* message =
-        PyUnicode_FromFormat("loaded %d index file%s", pl_size(current->indexes), pl_size(current->indexes) > 1 ? "s" : "");
+        PyUnicode_FromFormat("loaded %zu index file%s", pl_size(current->indexes), pl_size(current->indexes) > 1 ? "s" : "");
     PyObject_CallMethod(logging, "info", "O", message);
     Py_DECREF(message);
     return 0;
-}
-
-typedef struct match_vector_t {
-    MatchObj* data;
-    size_t size;
-    size_t capacity;
-} match_vector_t;
-
-static match_vector_t match_vector_with_capacity(size_t capacity) {
-    if (capacity == 0) {
-        match_vector_t match_vector = {
-            NULL,
-            0,
-            0,
-        };
-        return match_vector;
-    }
-    match_vector_t match_vector = {
-        malloc(sizeof(MatchObj) * capacity),
-        0,
-        capacity,
-    };
-    return match_vector;
-}
-
-static void match_vector_clear(match_vector_t* match_vector) {
-    if (match_vector->capacity > 0) {
-        free(match_vector->data);
-        match_vector->data = NULL;
-        match_vector->size = 0;
-        match_vector->capacity = 0;
-    }
-}
-
-static void match_vector_reserve(match_vector_t* match_vector, size_t capacity) {
-    if (capacity <= match_vector->capacity) {
-        return;
-    }
-    match_vector->data = realloc(match_vector->data, sizeof(MatchObj) * capacity);
-    match_vector->capacity = capacity;
-}
-
-static void match_vector_push(match_vector_t* match_vector, MatchObj* match) {
-    if (match_vector->size == match_vector->capacity) {
-        match_vector_reserve(match_vector, match_vector->capacity == 0 ? 1 : match_vector->capacity * 2);
-    }
-    memcpy(match_vector->data + match_vector->size, match, sizeof(MatchObj));
-    match_vector->size += 1;
-}
-
-typedef struct callback_context_t {
-    const char* solve_id;
-    PyThreadState* save;
-    PyObject* builtins_bool;
-    PyObject* logging;
-    PyObject* logodds_callback;
-    PyObject* sorted_logodds_list;
-    solver_t solver;
-    double output_logodds_threshold;
-    match_vector_t matches;
-    anbool error_occured;
-} callback_context_t;
-
-static anbool record_match_callback(MatchObj* match, void* userdata) {
-    callback_context_t* context = (callback_context_t*)userdata;
-    verify_hit(
-        context->solver.index->starkd,
-        context->solver.index->cutnside,
-        match,
-        match->sip,
-        context->solver.vf,
-        square(context->solver.verify_pix) + square(context->solver.index->index_jitter / match->scale),
-        context->solver.distractor_ratio,
-        context->solver.field_maxx,
-        context->solver.field_maxy,
-        context->solver.logratio_bail_threshold,
-        context->solver.logratio_tokeep,
-        context->solver.logratio_stoplooking,
-        context->solver.distance_from_quad_bonus,
-        FALSE);
-    if (match->logodds >= context->output_logodds_threshold) {
-        double ra = 0.0;
-        double dec = 0.0;
-        xyzarr2radecdeg(match->center, &ra, &dec);
-        char logodds_string[24];
-        snprintf(logodds_string, 24, "%g", match->logodds);
-        char scale_string[24];
-        snprintf(scale_string, 24, "%g", match->scale);
-        char ra_string[24];
-        snprintf(ra_string, 24, "%g", ra);
-        char dec_string[24];
-        snprintf(dec_string, 24, "%g", dec);
-        match_vector_push(&context->matches, match);
-        match->theta = NULL;
-        match->matchodds = NULL;
-        match->refxyz = NULL;
-        match->refxy = NULL;
-        match->refstarid = NULL;
-        match->testperm = NULL;
-        char* index_directory_name = NULL;
-        {
-            char* match_indexname = strdup(match->index->indexname);
-            char* index_directory = strdup(dirname(match_indexname));
-            free(match_indexname);
-            index_directory_name = strdup(basename(index_directory));
-            free(index_directory);
-        }
-        char* index_name = NULL;
-        {
-            char* match_indexname = strdup(match->index->indexname);
-            index_name = strdup(basename(match_indexname));
-            free(match_indexname);
-        }
-        PyEval_RestoreThread(context->save);
-        PyObject* message = PyUnicode_FromFormat(
-            "solve %s: logodds=%s, matches=%d, conflicts=%d, distractors=%d, "
-            "ra=%s, dec=%s, scale=%s, index=%s/%s",
-            context->solve_id,
-            logodds_string,
-            context->matches.data[context->matches.size - 1].nmatch,
-            context->matches.data[context->matches.size - 1].nconflict,
-            context->matches.data[context->matches.size - 1].ndistractor,
-            ra_string,
-            dec_string,
-            scale_string,
-            index_directory_name,
-            index_name);
-        PyObject_CallMethod(context->logging, "info", "O", message);
-        Py_DECREF(message);
-        free(index_directory_name);
-        free(index_name);
-        anbool inserted_or_error = FALSE;
-        for (Py_ssize_t index = 0; index < PyList_Size(context->sorted_logodds_list); ++index) {
-            const double value = PyFloat_AsDouble(PyList_GET_ITEM(context->sorted_logodds_list, index));
-            if (PyErr_Occurred()) {
-                inserted_or_error = TRUE;
-                break;
-            }
-            if (match->logodds > value) {
-                PyObject* logodds = PyFloat_FromDouble(match->logodds);
-                PyList_Insert(context->sorted_logodds_list, index, logodds);
-                Py_DECREF(logodds);
-                inserted_or_error = TRUE;
-                break;
-            }
-        }
-        if (!inserted_or_error) {
-            PyObject* logodds = PyFloat_FromDouble(match->logodds);
-            PyList_Append(context->sorted_logodds_list, logodds);
-            Py_DECREF(logodds);
-        }
-        if (PyErr_Occurred()) {
-            context->error_occured = TRUE;
-            context->solver.quit_now = TRUE;
-        } else {
-            PyObject* action = PyObject_CallFunction(context->logodds_callback, "O", context->sorted_logodds_list);
-            if (PyErr_Occurred()) {
-                context->error_occured = TRUE;
-                context->solver.quit_now = TRUE;
-            } else {
-                PyObject* action_as_boolean = PyObject_CallFunction(context->builtins_bool, "O", action);
-                if (PyErr_Occurred()) {
-                    context->error_occured = TRUE;
-                    context->solver.quit_now = TRUE;
-                } else if (action_as_boolean == Py_False) {
-                    context->solver.quit_now = TRUE;
-                }
-            }
-        }
-        const int signal = PyErr_CheckSignals();
-        context->save = PyEval_SaveThread();
-        if (signal != 0) {
-            context->error_occured = TRUE;
-            context->solver.quit_now = TRUE;
-        }
-    } else {
-        PyEval_RestoreThread(context->save);
-        const int signal = PyErr_CheckSignals();
-        context->save = PyEval_SaveThread();
-        if (signal != 0) {
-            context->error_occured = TRUE;
-            context->solver.quit_now = TRUE;
-        }
-    }
-    return FALSE;
-}
-
-static time_t timer_callback(void* userdata) {
-    callback_context_t* context = (callback_context_t*)userdata;
-    PyEval_RestoreThread(context->save);
-    const int signal = PyErr_CheckSignals();
-    context->save = PyEval_SaveThread();
-    if (signal != 0) {
-        context->error_occured = TRUE;
-        context->solver.quit_now = TRUE;
-    }
-    return context->solver.quit_now ? 0 : 1;
-}
-
-static PyObject*
-tagalong_to_python_object(startree_t* tree, int column_index, const char* column_name, int star_id, PyObject* logging) {
-    int size = startree_get_tagalong_column_array_size(tree, column_index);
-    if (size == 0) {
-        Py_INCREF(Py_None);
-        return Py_None;
-    }
-    tfits_type type = startree_get_tagalong_column_fits_type(tree, column_index);
-    fitstable_t* table = startree_get_tagalong(tree);
-    int row_size = 0;
-    void* row = fitstable_read_column_array_inds(table, column_name, type, &star_id, 1, &row_size);
-    if (row == NULL) {
-        Py_INCREF(Py_None);
-        return Py_None;
-    }
-    PyObject* result = NULL;
-    switch (type) {
-        case TFITS_BIN_TYPE_D: // double
-            if (row_size > 1) {
-                result = PyTuple_New(row_size);
-                for (int index = 0; index < row_size; ++index) {
-                    PyTuple_SET_ITEM(result, index, PyFloat_FromDouble(((double*)row)[index]));
-                }
-            } else {
-                result = PyFloat_FromDouble(*(double*)row);
-            }
-            break;
-        case TFITS_BIN_TYPE_E: // float
-            if (row_size > 1) {
-                result = PyTuple_New(row_size);
-                for (int index = 0; index < row_size; ++index) {
-                    PyTuple_SET_ITEM(result, index, PyFloat_FromDouble(((float*)row)[index]));
-                }
-            } else {
-                result = PyFloat_FromDouble(*(float*)row);
-            }
-            break;
-        case TFITS_BIN_TYPE_A: // char
-            result = PyUnicode_FromStringAndSize((const char*)row, row_size);
-            break;
-        case TFITS_BIN_TYPE_I: // i16
-            if (row_size > 1) {
-                result = PyTuple_New(row_size);
-                for (int index = 0; index < row_size; ++index) {
-                    PyTuple_SET_ITEM(result, index, PyLong_FromLong(((int16_t*)row)[index]));
-                }
-            } else {
-                result = PyLong_FromLong(*(int16_t*)row);
-            }
-            break;
-        case TFITS_BIN_TYPE_J: // i32
-            if (row_size > 1) {
-                result = PyTuple_New(row_size);
-                for (int index = 0; index < row_size; ++index) {
-                    PyTuple_SET_ITEM(result, index, PyLong_FromLong(((int32_t*)row)[index]));
-                }
-            } else {
-                result = PyLong_FromLong(*(int16_t*)row);
-            }
-            break;
-        case TFITS_BIN_TYPE_K: // i64
-            if (row_size > 1) {
-                result = PyTuple_New(row_size);
-                for (int index = 0; index < row_size; ++index) {
-                    PyTuple_SET_ITEM(result, index, PyLong_FromLong(((int64_t*)row)[index]));
-                }
-            } else {
-                result = PyLong_FromLong(*(int64_t*)row);
-            }
-            break;
-        default: {
-            PyObject* message = PyUnicode_FromFormat("unsupported FITS type %d", type);
-            PyObject_CallMethod(logging, "warning", "O", message);
-            Py_DECREF(message);
-            break;
-        }
-    }
-    free(row);
-    if (result == NULL) {
-        Py_INCREF(Py_None);
-        result = Py_None;
-    }
-    return result;
-}
-
-static PyObject* star_to_python_object(startree_t* tree, int star_id, anbool has_tagalong, int columns, PyObject* logging) {
-    double ra = 0.0;
-    double dec = 0.0;
-    startree_get_radec(tree, star_id, &ra, &dec);
-    PyObject* metadata = PyDict_New();
-    if (has_tagalong) {
-        for (int column_index = 0; column_index < columns; ++column_index) {
-            const char* column_name = startree_get_tagalong_column_name(tree, column_index);
-            PyObject* value = tagalong_to_python_object(tree, column_index, column_name, star_id, logging);
-            PyDict_SetItemString(metadata, column_name, value);
-            Py_DECREF(value);
-        }
-    }
-    PyObject* star = PyTuple_New(3);
-    PyTuple_SET_ITEM(star, 0, PyFloat_FromDouble(ra));
-    PyTuple_SET_ITEM(star, 1, PyFloat_FromDouble(dec));
-    PyTuple_SET_ITEM(star, 2, metadata);
-    return star;
-}
-
-static void add_wcs_field(PyObject* wcs_fields, const char* name, PyObject* value, const char* comment) {
-    PyObject* value_and_comment = PyTuple_New(2);
-    PyTuple_SET_ITEM(value_and_comment, 0, value);
-    PyTuple_SET_ITEM(value_and_comment, 1, PyUnicode_FromString(comment));
-    PyDict_SetItemString(wcs_fields, name, value_and_comment);
-    Py_DECREF(value_and_comment);
-}
-
-static void add_wcs_sip_polynomial(PyObject* wcs_fields, const char* format, int order, const double* data, const char* comment) {
-    char name[7];
-    // in SIP, data[i * SIP_MAXORDER + j] = 0 if i + j > order
-    for (int i = 0; i <= order; ++i) {
-        for (int j = 0; i + j <= order; ++j) {
-            sprintf(name, format, i, j);
-            add_wcs_field(wcs_fields, name, PyFloat_FromDouble(data[i * SIP_MAXORDER + j]), comment);
-        }
-    }
-}
-
-static fitstable_t* get_tagalong(startree_t* star_tree) {
-    if (!star_tree->tree->io) {
-        return NULL;
-    }
-    const char* filename = fitsbin_get_filename(star_tree->tree->io);
-    if (filename == NULL) {
-        return NULL;
-    }
-    fitstable_t* tag = fitstable_open(filename);
-    if (tag == NULL) {
-        return NULL;
-    }
-    int next = fitstable_n_extensions(tag);
-    int extension = -1;
-    for (int index = 1; index < next; ++index) {
-        const qfits_header* header = anqfits_get_header_const(tag->anq, index);
-        if (header == NULL) {
-            continue;
-        }
-        char* type = fits_get_dupstring(header, "AN_FILE");
-        if (streq(type, AN_FILETYPE_TAGALONG)) {
-            free(type);
-            extension = index;
-            break;
-        }
-        free(type);
-    }
-    if (extension == -1) {
-        return NULL;
-    }
-    fitstable_open_extension(tag, extension);
-    return tag;
 }
 
 static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* args) {
@@ -491,10 +128,12 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     int parity = 0;
     PyObject* tune_up_logodds_threshold = NULL;
     double output_logodds_threshold = 0.0;
+    PyObject* slices_starts = NULL;
+    PyObject* slices_ends = NULL;
     PyObject* logodds_callback = NULL;
     if (!PyArg_ParseTuple(
             args,
-            "OOddOsppiiidddddiiiOdO",
+            "OOddOsppiiidddddiiiOdOOO",
             &stars_xs,
             &stars_ys,
             &scale_lower,
@@ -516,6 +155,8 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
             &parity,
             &tune_up_logodds_threshold,
             &output_logodds_threshold,
+            &slices_starts,
+            &slices_ends,
             &logodds_callback)) {
         return NULL;
     }
@@ -588,6 +229,37 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         PyErr_SetString(PyExc_TypeError, "stars_xs cannot be empty");
         return NULL;
     }
+    if (!PyList_Check(slices_starts)) {
+        PyErr_SetString(PyExc_TypeError, "slices_starts must be a list");
+        return NULL;
+    }
+    if (!PyList_Check(slices_ends)) {
+        PyErr_SetString(PyExc_TypeError, "slices_ends must be a list");
+        return NULL;
+    }
+    const Py_ssize_t slices_size = PyList_GET_SIZE(slices_starts);
+    if (slices_size != PyList_GET_SIZE(slices_ends)) {
+        PyErr_SetString(PyExc_TypeError, "slices_starts and slices_ends must have the same size");
+        return NULL;
+    }
+    if (slices_size == 0) {
+        PyErr_SetString(PyExc_TypeError, "slices_starts cannot be empty");
+        return NULL;
+    }
+    int* slices = malloc((size_t)slices_size * 2 * sizeof(double));
+    for (Py_ssize_t index = 0; index < slices_size; ++index) {
+        slices[index * 2 + 0] = (int)PyLong_AsSize_t(PyList_GET_ITEM(slices_starts, index));
+        slices[index * 2 + 1] = (int)PyLong_AsSize_t(PyList_GET_ITEM(slices_ends, index));
+        if (PyErr_Occurred() || slices[index * 2 + 0] < 0 || slices[index * 2 + 1] > stars_size
+            || slices[index * 2 + 0] >= slices[index * 2 + 1]) {
+            free(slices);
+            PyErr_SetString(
+                PyExc_TypeError,
+                "slices_starts and slices_end must contain integers in the range [0, len(stars)[, and slices_starts[i] must be "
+                "strictly smaller than slices_ends[i]");
+            return NULL;
+        }
+    }
     PyObject* builtins = PyEval_GetBuiltins();
     if (!builtins) {
         return NULL;
@@ -618,11 +290,13 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     if (pl_size(selected_indexes) == 0) {
         PyErr_SetString(PyExc_TypeError, "index files do not overlap the provided position and scale hints");
         pl_remove_all(selected_indexes);
+        free(slices);
         return NULL;
     }
     PyObject* logging = PyImport_ImportModule("logging");
     if (!logging) {
         pl_remove_all(selected_indexes);
+        free(slices);
         return NULL;
     }
     {
@@ -662,6 +336,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         PyErr_SetString(PyExc_TypeError, "items in stars_xs and stars_ys must be floats");
         pl_remove_all(selected_indexes);
         Py_DECREF(logging);
+        free(slices);
         return NULL;
     }
     callback_context_t context = {
@@ -674,7 +349,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         .solver =
             {
                 // input fields
-                .indexes = selected_indexes,
+                .indexes = pl_new(1),
                 .fieldxy = NULL,
                 .pixel_xscale = 0.0,
                 .predistort = NULL,
@@ -755,14 +430,75 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         .matches = match_vector_with_capacity(8),
         .error_occured = FALSE,
     };
+    {
+        err_t* errors_state = errors_get_state();
+        errors_state->errfunc = error_callback;
+        errors_state->baton = &context;
+        errors_state->print_f = NULL;
+        errors_state->save = FALSE;
+    }
     context.solver.userdata = &context;
     if (has_position_hint) {
         solver_set_radec(&context.solver, position_hint_ra, position_hint_dec, position_hint_radius);
     }
-    // prevent best match copy before running the solver
-    context.solver.have_best_match = TRUE;
-    context.solver.best_match.logodds = LARGE_VAL;
-    solver_run(&context.solver);
+    const size_t selected_indexes_size = pl_size(selected_indexes);
+    solver_preprocess_field(&context.solver);
+    for (Py_ssize_t slice_index = 0; slice_index < slices_size; ++slice_index) {
+        context.solver.startobj = slices[slice_index * 2 + 0];
+        context.solver.endobj = slices[slice_index * 2 + 1];
+        anbool inner_break = FALSE;
+        for (size_t position = 0; position < selected_indexes_size; ++position) {
+            index_t* index = pl_get(selected_indexes, position);
+            {
+                char* index_name = NULL;
+                simple_index_name(index, &index_name);
+                PyEval_RestoreThread(context.save);
+                PyObject* message = PyUnicode_FromFormat(
+                    "solve %s: slice=[%d, %d[ (%zd / %zd), index=%s (%zu / %zu)",
+                    solve_id,
+                    context.solver.startobj,
+                    context.solver.endobj,
+                    slice_index + 1,
+                    slices_size,
+                    index_name,
+                    position + 1,
+                    selected_indexes_size);
+                PyObject_CallMethod(logging, "info", "O", message);
+                Py_DECREF(message);
+                context.save = PyEval_SaveThread();
+                free(index_name);
+            }
+            pl_append(context.solver.indexes, index);
+            solver_reset_counters(&context.solver);
+            solver_reset_best_match(&context.solver);
+            context.solver.have_best_match = TRUE;
+            context.solver.best_match.logodds = LARGE_VAL;
+            solver_run(&context.solver);
+            pl_remove_all(context.solver.indexes);
+            context.solver.index = NULL;
+            PyEval_RestoreThread(context.save);
+            if (PyErr_CheckSignals() != 0) {
+                context.error_occured = TRUE;
+            }
+            if (PyErr_Occurred() || context.error_occured || context.solver.quit_now) {
+                context.save = PyEval_SaveThread();
+                inner_break = TRUE;
+                break;
+            }
+            context.save = PyEval_SaveThread();
+        }
+        if (inner_break) {
+            break;
+        }
+    }
+    free(slices);
+    {
+        err_t* errors_state = errors_get_state();
+        errors_state->errfunc = NULL;
+        errors_state->baton = NULL;
+        errors_state->print_f = stderr;
+        errors_state->save = FALSE;
+    }
     PyEval_RestoreThread(context.save);
     if (PyErr_Occurred() || context.error_occured) {
         if (!PyErr_Occurred()) {
@@ -971,6 +707,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         result = Py_None;
     }
     match_vector_clear(&context.matches);
+    pl_remove_all(context.solver.indexes);
     context.solver.indexes = NULL;
     context.solver.fieldxy_orig = NULL;
     starxy_free_data(&starxy);
