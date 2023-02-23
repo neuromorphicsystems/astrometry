@@ -151,7 +151,12 @@ solver = ...
 solution = ...
 
 if solution.has_match():
-    wcs = astropy.wcs.WCS(solution.best_match().wcs_fields)
+    wcs = astropy.wcs.WCS(
+        astropy.io.fits.Header(
+            astropy.io.fits.Card(key, value[0], value[1])
+            for key, value in wcs_fields.items()
+        )
+    )
     pixels = wcs.all_world2pix(
         [[star.ra_deg, star.dec_deg] for star in solution.best_match().stars],
         0,
