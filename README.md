@@ -145,7 +145,6 @@ if solution.has_match():
 
 ```py
 import astrometry
-import astropy.wcs
 
 solver = ...
 solution = ...
@@ -159,7 +158,7 @@ if solution.has_match():
     # pixels is a len(solution.best_match().stars) x 2 numpy array of float values
 ```
 
-`astropy.wcs.WCS` provides many more functions to probe the transformation properties and convert from and to pixel coordinates. See https://docs.astropy.org/en/stable/api/astropy.wcs.WCS.html for details.
+`astropy.wcs.WCS` provides many more functions to probe the transformation properties and convert from and to pixel coordinates. See https://docs.astropy.org/en/stable/api/astropy.wcs.WCS.html for details. Astropy (https://pypi.org/project/astropy/) must be installed to use this method.
 
 ## Print series description and size (without downloading them)
 
@@ -516,7 +515,7 @@ class Match:
 -   `quad_stars`: The index stars subset (usually 4 but can be 3 or 5) used in the hash code search step (see https://arxiv.org/pdf/0910.2233.pdf, 2. Methods).
 -   `wcs_fields`: WCS fields describing the transformation between pixel coordinates and world coordinates. This dictionary can be passed directly to `astropy.wcs.WCS`.
 
-`astropy_wcs` generates an Astropy WCS object. See [Calculate field stars pixel positions with astropy](#calculate-field-stars-pixel-positions-with-astropy) for details.
+`astropy_wcs` generates an Astropy WCS object. Astropy (https://pypi.org/project/astropy/) must be installed to use this method. See [Calculate field stars pixel positions with astropy](#calculate-field-stars-pixel-positions-with-astropy) for details.
 
 ## Star
 
