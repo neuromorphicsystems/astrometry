@@ -139,6 +139,17 @@ class Match:
     quad_stars: tuple[Star, ...]
     wcs_fields: dict[str, tuple[typing.Any, str]]
 
+    def astropy_wcs(self):
+        import astropy.wcs
+        import astropy.io.fits
+
+        return astropy.wcs.WCS(
+            astropy.io.fits.Header(
+                astropy.io.fits.Card(key, value[0], value[1])
+                for key, value in self.wcs_fields.items()
+            )
+        )
+
 
 @dataclasses.dataclass
 class Solution:
@@ -160,6 +171,40 @@ class Solution:
         for match in solution_as_dict["matches"]:
             match["index_path"] = str(match["index_path"])
         return json.dumps(solution_as_dict)
+
+    @classmethod
+    def from_json(cls, solution_as_json: str):
+        solution_as_dict = json.loads(solution_as_json)
+        return cls(
+            solve_id=solution_as_dict["solve_id"],
+            matches=[
+                Match(
+                    logodds=match_as_dict["logodds"],
+                    center_ra_deg=match_as_dict["center_ra_deg"],
+                    center_dec_deg=match_as_dict["center_dec_deg"],
+                    scale_arcsec_per_pixel=match_as_dict["scale_arcsec_per_pixel"],
+                    index_path=pathlib.Path(match_as_dict["index_path"]),
+                    stars=tuple(
+                        Star(
+                            ra_deg=star_as_dict["ra_deg"],
+                            dec_deg=star_as_dict["dec_deg"],
+                            metadata=star_as_dict["metadata"],
+                        )
+                        for star_as_dict in match_as_dict["stars"]
+                    ),
+                    quad_stars=tuple(
+                        Star(
+                            ra_deg=star_as_dict["ra_deg"],
+                            dec_deg=star_as_dict["dec_deg"],
+                            metadata=star_as_dict["metadata"],
+                        )
+                        for star_as_dict in match_as_dict["quad_stars"]
+                    ),
+                    wcs_fields=match_as_dict["wcs_fields"],
+                )
+                for match_as_dict in solution_as_dict["matches"]
+            ],
+        )
 
 
 class Solver(astrometry_extension.Solver):

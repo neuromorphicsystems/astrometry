@@ -151,12 +151,7 @@ solver = ...
 solution = ...
 
 if solution.has_match():
-    wcs = astropy.wcs.WCS(
-        astropy.io.fits.Header(
-            astropy.io.fits.Card(key, value[0], value[1])
-            for key, value in wcs_fields.items()
-        )
-    )
+    wcs = solution.best_match().astropy_wcs()
     pixels = wcs.all_world2pix(
         [[star.ra_deg, star.dec_deg] for star in solution.best_match().stars],
         0,
@@ -485,9 +480,15 @@ class Solution:
     def has_match(self) -> bool: ...
 
     def best_match(self) -> Match: ...
+
+    def to_json(self) -> str: ...
+
+    @classmethod
+    def from_json(cls, solution_as_json: str) -> Solution: ...
+
 ```
 
-`matches` are sorted in descending log-odds order. `best_match` returns the first match in the list.
+`matches` are sorted in descending log-odds order. `best_match` returns the first match in the list. `to_json` and `from_json` may be used to save and load solutions.
 
 ## Match
 
@@ -502,6 +503,8 @@ class Match:
     stars: tuple[Star, ...]
     quad_stars: tuple[Star, ...]
     wcs_fields: dict[str, tuple[typing.Any, str]]
+
+    def astropy_wcs(self) -> astropy.wcs.WCS: ...
 ```
 
 -   `logodds`: Log-odds (https://en.wikipedia.org/wiki/Logit) of the match.
@@ -512,6 +515,8 @@ class Match:
 -   `stars`: List of visible index stars. This list is almost certainly going to differ from the input stars list.
 -   `quad_stars`: The index stars subset (usually 4 but can be 3 or 5) used in the hash code search step (see https://arxiv.org/pdf/0910.2233.pdf, 2. Methods).
 -   `wcs_fields`: WCS fields describing the transformation between pixel coordinates and world coordinates. This dictionary can be passed directly to `astropy.wcs.WCS`.
+
+`astropy_wcs` generates an Astropy WCS object. See [Calculate field stars pixel positions with astropy](#calculate-field-stars-pixel-positions-with-astropy) for details.
 
 ## Star
 
@@ -567,7 +572,7 @@ def batches_generator(
     ...
 ```
 
-- `batch_size` sets the size of the generated batches.
+-   `batch_size` sets the size of the generated batches.
 
 `batches_generator` returns a slices generator compatible with `SolutionParameters.slices_generator`. The slices are non-overlapping and non-full slices are ignored. For instance, a batch size of `25` over `83` stars would generate the slices `(0, 25)`, `(25, 50)`, and `(50, 75)`.
 

@@ -4,3 +4,4 @@ astrometry_cache
 build
 wheelhouse
 __pycache__
+test/solution.json
