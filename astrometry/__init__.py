@@ -2,6 +2,7 @@ from __future__ import annotations
 import astrometry_extension
 import dataclasses
 import enum
+import json
 import math
 import operator
 import pathlib
@@ -153,6 +154,12 @@ class Solution:
 
     def best_match(self) -> Match:
         return self.matches[0]
+
+    def to_json(self):
+        solution_as_dict = dataclasses.asdict(self)
+        for match in solution_as_dict["matches"]:
+            match["index_path"] = str(match["index_path"])
+        return json.dumps(solution_as_dict)
 
 
 class Solver(astrometry_extension.Solver):

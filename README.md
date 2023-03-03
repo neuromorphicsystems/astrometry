@@ -599,7 +599,7 @@ git submodule update --recursive
 Format the code:
 
 ```sh
-clang-format -i astrometry_extension/astrometry_extension.c
+clang-format -i astrometry_extension/astrometry_extension.c astrometry_extension/astrometry_extension_utilities.h
 ```
 
 Build a local version:

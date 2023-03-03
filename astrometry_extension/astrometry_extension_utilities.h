@@ -5,6 +5,7 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <libgen.h>
+#include <math.h>
 #include <string.h>
 #include <structmember.h>
 
@@ -255,6 +256,13 @@ static void error_callback(
     context->save = PyEval_SaveThread();
 }
 
+static PyObject* double_to_python_object(double value) {
+    if (isnan(value) || isinf(value)) {
+        Py_RETURN_NONE;
+    }
+    return PyFloat_FromDouble(value);
+}
+
 static PyObject*
 tagalong_to_python_object(startree_t* tree, int column_index, const char* column_name, int star_id, PyObject* logging) {
     int size = startree_get_tagalong_column_array_size(tree, column_index);
@@ -276,20 +284,20 @@ tagalong_to_python_object(startree_t* tree, int column_index, const char* column
             if (row_size > 1) {
                 result = PyTuple_New(row_size);
                 for (int index = 0; index < row_size; ++index) {
-                    PyTuple_SET_ITEM(result, index, PyFloat_FromDouble(((double*)row)[index]));
+                    PyTuple_SET_ITEM(result, index, double_to_python_object(((double*)row)[index]));
                 }
             } else {
-                result = PyFloat_FromDouble(*(double*)row);
+                result = double_to_python_object(*(double*)row);
             }
             break;
         case TFITS_BIN_TYPE_E: // float
             if (row_size > 1) {
                 result = PyTuple_New(row_size);
                 for (int index = 0; index < row_size; ++index) {
-                    PyTuple_SET_ITEM(result, index, PyFloat_FromDouble(((float*)row)[index]));
+                    PyTuple_SET_ITEM(result, index, double_to_python_object(((float*)row)[index]));
                 }
             } else {
-                result = PyFloat_FromDouble(*(float*)row);
+                result = double_to_python_object(*(float*)row);
             }
             break;
         case TFITS_BIN_TYPE_A: // char
