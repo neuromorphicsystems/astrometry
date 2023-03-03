@@ -249,7 +249,7 @@ class BuildCommand(setuptools.command.build_py.build_py):
 
 setuptools.setup(
     name="astrometry",
-    version="4.1.0",
+    version="4.1.1",
     url="https://github.com/neuromorphicsystems/astrometry",
     author="ICNS, Alexandre Marcireau",
     author_email="alexandre.marcireau@gmail.com",
