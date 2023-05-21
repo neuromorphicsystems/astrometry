@@ -254,7 +254,7 @@ import astrometry
 def logodds_callback(logodds_list: list[float]) -> astrometry.Action:
     if len(logodds_list) < 3:
         return astrometry.Action.CONTINUE
-    if logodds[1] > logodds[0] - 10 and logodds[2] > logodds[0] - 10:
+    if logodds_list[1] > logodds_list[0] - 10 and logodds_list[2] > logodds_list[0] - 10:
         return astrometry.Action.STOP
     return astrometry.Action.CONTINUE
 

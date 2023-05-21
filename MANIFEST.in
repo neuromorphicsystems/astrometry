@@ -11,3 +11,6 @@ include astrometry.net/solver/*.h
 include astrometry.net/util/boilerplate.h
 include astrometry.net/util/bl-nl.c
 include astrometry.net/util/qsort_reentrant.c
+include astrometry_extension/astrometry_extension.c
+include astrometry_extension/astrometry_extension_utilities.h
+include scripts/*.py
