@@ -23,7 +23,7 @@ jobs:
               with:
                   submodules: true
             - name: Build wheels
-              uses: pypa/cibuildwheel@v2.11.2
+              uses: pypa/cibuildwheel@v2.18.1
             - uses: actions/upload-artifact@v3
               with:
                   path: ./wheelhouse/*.whl
@@ -48,6 +48,6 @@ jobs:
               with:
                   name: artifact
                   path: dist
-            - uses: pypa/gh-action-pypi-publish@v1.5.0
+            - uses: pypa/gh-action-pypi-publish@v1.8.10
               with:
                   password: ${{ secrets.PYPI_API_TOKEN }}
