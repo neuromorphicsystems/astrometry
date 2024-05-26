@@ -19,7 +19,7 @@ jobs:
             matrix:
                 os: [ubuntu-22.04, macos-12]
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
               with:
                   submodules: true
             - name: Build wheels
@@ -31,7 +31,7 @@ jobs:
         name: Build source distribution
         runs-on: ubuntu-22.04
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
               with:
                   submodules: true
             - name: Build sdist
