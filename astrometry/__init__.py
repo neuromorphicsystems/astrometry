@@ -227,10 +227,13 @@ class Solver:
         value: typing.Optional[BaseException],
         traceback: typing.Optional[types.TracebackType],
     ) -> bool:
+        self.close()
+        return False
+
+    def close(self):
         if self.inner is not None:
             self.inner.close()
             self.inner = None
-        return False
 
     def solve(
         self,

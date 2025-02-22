@@ -63,11 +63,11 @@ for index in range(0, SOLVES):
         )
         assert solution.has_match()
         del solution
-        memory_sample = process.memory_full_info().uss
-        memory_samples[index] = memory_sample
-        print(
-            f"(repeated solver allocation with context manager) solve {index + 1} / {SOLVES}, memory usage: {size_to_string(memory_sample)}"
-        )
+    memory_sample = process.memory_full_info().uss
+    memory_samples[index] = memory_sample
+    print(
+        f"(repeated solver allocation with context manager) solve {index + 1} / {SOLVES}, memory usage: {size_to_string(memory_sample)}"
+    )
 deltas = numpy.diff(memory_samples)
 repeated_solver_allocation_with_context_manager_leak = (
     size_to_string(int(numpy.min(deltas[deltas >= 0]))),
@@ -91,6 +91,7 @@ for index in range(0, SOLVES):
         solution_parameters=astrometry.SolutionParameters(),
     )
     assert solution.has_match()
+    solver.close()
     del solution
     del solver
     memory_sample = process.memory_full_info().uss
@@ -157,6 +158,7 @@ with astrometry.Solver(
             ),
         )
         del solution
+        del stars
         memory_sample = process.memory_full_info().uss
         memory_samples[index] = memory_sample
         print(
