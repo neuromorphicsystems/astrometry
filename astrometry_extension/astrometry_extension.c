@@ -596,7 +596,6 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
             double ra = 0.0;
             double dec = 0.0;
             xyzarr2radecdeg(match->center, &ra, &dec);
-            PyObject* index_id = PyLong_FromLong(match->index->indexid);
             if (match->index->starkd->tagalong == NULL) {
                 match->index->starkd->tagalong = get_tagalong(match->index->starkd);
             }
@@ -605,8 +604,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
             PyObject* match_stars = PyTuple_New(match->nindex);
             for (int star_id_index = 0; star_id_index < match->nindex; ++star_id_index) {
                 PyObject* key = PyTuple_New(2);
-                Py_INCREF(index_id);
-                PyTuple_SET_ITEM(key, 0, index_id);
+                PyTuple_SET_ITEM(key, 0, PyLong_FromLong(match->index->indexid));
                 PyTuple_SET_ITEM(key, 1, PyLong_FromLong(match->refstarid[star_id_index]));
                 if (PyDict_GetItem(stars, key) == NULL) {
                     PyObject* star = star_to_python_object(
@@ -630,13 +628,14 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
                 if (query != NULL && query->nres > 0) {
                     PyObject* key = PyTuple_New(2);
                     Py_INCREF(index_id);
-                    PyTuple_SET_ITEM(key, 0, index_id);
+                    PyTuple_SET_ITEM(key, 0, PyLong_FromLong(match->index->indexid));
                     PyTuple_SET_ITEM(key, 1, PyLong_FromLong(query->inds[0]));
                     PyTuple_SET_ITEM(match_quad_stars, quad_index, key);
                     if (PyDict_GetItem(stars, key) == NULL) {
                         PyObject* star = star_to_python_object(
                             match->index->starkd, query->inds[0], match->index->starkd->tagalong != NULL, columns, logging);
                         PyDict_SetItem(stars, key, star);
+                        Py_DECREF(star);                        
                     }
                 } else {
                     Py_INCREF(Py_None);
@@ -644,7 +643,6 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
                 }
                 kdtree_free_query(query);
             }
-            Py_DECREF(index_id);
             PyObject* wcs_fields = PyDict_New();
             add_wcs_field(wcs_fields, "WCSAXES", PyLong_FromLong(2), "Number of coordinate axes");
             add_wcs_field(wcs_fields, "EQUINOX", PyFloat_FromDouble(2000.0), "Equatorial coordinates definition (yr)");
