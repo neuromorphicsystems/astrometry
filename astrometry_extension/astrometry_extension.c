@@ -616,6 +616,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
                         columns,
                         logging);
                     PyDict_SetItem(stars, key, star);
+                    Py_DECREF(star);
                 }
                 PyTuple_SET_ITEM(match_stars, star_id_index, key);
             }
