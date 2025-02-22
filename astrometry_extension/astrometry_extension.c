@@ -627,7 +627,6 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
                     KD_OPTIONS_SMALL_RADIUS);
                 if (query != NULL && query->nres > 0) {
                     PyObject* key = PyTuple_New(2);
-                    Py_INCREF(index_id);
                     PyTuple_SET_ITEM(key, 0, PyLong_FromLong(match->index->indexid));
                     PyTuple_SET_ITEM(key, 1, PyLong_FromLong(query->inds[0]));
                     PyTuple_SET_ITEM(match_quad_stars, quad_index, key);
