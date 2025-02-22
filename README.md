@@ -1,34 +1,38 @@
 - [Astrometry](#astrometry)
 - [Get started](#get-started)
 - [Examples](#examples)
-    - [Provide size and position hints](#provide-size-and-position-hints)
-    - [Print progress information (download and solve)](#print-progress-information-download-and-solve)
-    - [Print field stars metadata](#print-field-stars-metadata)
-    - [Calculate field stars pixel positions with astropy](#calculate-field-stars-pixel-positions-with-astropy)
-    - [Print series description and size (without downloading them)](#print-series-description-and-size-without-downloading-them)
-    - [Disable tune-up and distortion](#disable-tune-up-and-distortion)
-    - [Stop the solver early using the log-odds callback](#stop-the-solver-early-using-the-log-odds-callback)
-        - [Return after the first match](#return-after-the-first-match)
-        - [Return early if the best log-odds are larger than 100.0](#return-early-if-the-best-log-odds-are-larger-than-1000)
-        - [Return early if there are at least ten matches](#return-early-if-there-are-at-least-ten-matches)
-        - [Return early if the three best matches are similar](#return-early-if-the-three-best-matches-are-similar)
+  - [Use the solver without `with`](#use-the-solver-without-with)
+  - [Provide size and position hints](#provide-size-and-position-hints)
+  - [Print progress information (download and solve)](#print-progress-information-download-and-solve)
+  - [Print field stars metadata](#print-field-stars-metadata)
+  - [Calculate field stars pixel positions with astropy](#calculate-field-stars-pixel-positions-with-astropy)
+  - [Print series description and size (without downloading them)](#print-series-description-and-size-without-downloading-them)
+  - [Disable tune-up and distortion](#disable-tune-up-and-distortion)
+  - [Stop the solver early using the log-odds callback](#stop-the-solver-early-using-the-log-odds-callback)
+    - [Return after the first match](#return-after-the-first-match)
+    - [Return early if the best log-odds are larger than 100.0](#return-early-if-the-best-log-odds-are-larger-than-1000)
+    - [Return early if there are at least ten matches](#return-early-if-there-are-at-least-ten-matches)
+    - [Return early if the three best matches are similar](#return-early-if-the-three-best-matches-are-similar)
 - [Choosing series](#choosing-series)
 - [Documentation](#documentation)
-    - [Solver](#solver)
-    - [SizeHint](#sizehint)
-    - [PositionHint](#positionhint)
-    - [Action](#action)
-    - [Parity](#parity)
-    - [SolutionParameters](#solutionparameters)
-    - [Solution](#solution)
-    - [Match](#match)
-    - [Star](#star)
-    - [Series](#series)
-    - [batches\_generator](#batches_generator)
-    - [SupportsFloatMapping](#supportsfloatmapping)
+  - [Solver](#solver)
+  - [SizeHint](#sizehint)
+  - [PositionHint](#positionhint)
+  - [Action](#action)
+  - [Parity](#parity)
+  - [SolutionParameters](#solutionparameters)
+  - [Solution](#solution)
+  - [Match](#match)
+  - [Star](#star)
+  - [Series](#series)
+  - [batches\_generator](#batches_generator)
+  - [SupportsFloatMapping](#supportsfloatmapping)
 - [Contribute](#contribute)
-- [Publish](#publish)
-- [MSVC compatibility (work in progress)](#msvc-compatibility-work-in-progress)
+  - [Clone the repository](#clone-the-repository)
+  - [Format and lint](#format-and-lint)
+  - [Build a local version](#build-a-local-version)
+  - [Publish](#publish)
+  - [MSVC compatibility (work in progress)](#msvc-compatibility-work-in-progress)
 
 # Astrometry
 
@@ -40,78 +44,90 @@ This package is useful for solving plates from a Python script, comparing star e
 
 Unlike Astrometry.net, Astrometry does not include FITS parsing or image pre-processing algorithms. Stars must be provided as a list of pixel positions.
 
-This library works on Linux and macOS, but not Windows (at the moment). WSL should work but has not been tested.
+This library works on Linux and macOS but it requires WSL on Windows.
 
 We are not the authors of the Astrometry.net library. You should cite works from https://astrometry.net/biblio.html if you use the Astrometry.net algorithm via this package.
 
 # Get started
 
 ```sh
-python3 -m pip install astrometry
+python3 -m venv .venv
+source .venv/bin/activate
+pip install astrometry
 ```
 
 ```py
 import astrometry
 
-solver = astrometry.Solver(
+with astrometry.Solver(
     astrometry.series_5200.index_files(
         cache_directory="astrometry_cache",
         scales={6},
     )
-)
+) as solver:
 
-stars = [
-    [388.9140568247906, 656.5003281719216],
-    [732.9210858972549, 473.66395545775106],
-    [401.03459504299843, 253.788113189415],
-    [312.6591868096163, 624.7527729425295],
-    [694.6844564647456, 606.8371776658344],
-    [741.7233477959561, 344.41284826261443],
-    [867.3574610200455, 672.014835980283],
-    [1063.546651153479, 593.7844603550848],
-    [286.69070190952704, 422.170016812049],
-    [401.12779619355155, 16.13543616977013],
-    [205.12103484692776, 698.1847350789413],
-    [202.88444768690894, 111.24830187635557],
-    [339.1627757703069, 86.60739435924549],
-]
+    stars = [
+        [388.9140568247906, 656.5003281719216],
+        [732.9210858972549, 473.66395545775106],
+        [401.03459504299843, 253.788113189415],
+        [312.6591868096163, 624.7527729425295],
+        [694.6844564647456, 606.8371776658344],
+        [741.7233477959561, 344.41284826261443],
+        [867.3574610200455, 672.014835980283],
+        [1063.546651153479, 593.7844603550848],
+        [286.69070190952704, 422.170016812049],
+        [401.12779619355155, 16.13543616977013],
+        [205.12103484692776, 698.1847350789413],
+        [202.88444768690894, 111.24830187635557],
+        [339.1627757703069, 86.60739435924549],
+    ]
 
-solution = solver.solve(
-    stars=stars,
-    size_hint=None,
-    position_hint=None,
-    solution_parameters=astrometry.SolutionParameters(),
-)
+    solution = solver.solve(
+        stars=stars,
+        size_hint=None,
+        position_hint=None,
+        solution_parameters=astrometry.SolutionParameters(),
+    )
 
-if solution.has_match():
-    print(f"{solution.best_match().center_ra_deg=}")
-    print(f"{solution.best_match().center_dec_deg=}")
-    print(f"{solution.best_match().scale_arcsec_per_pixel=}")
+    if solution.has_match():
+        print(f"{solution.best_match().center_ra_deg=}")
+        print(f"{solution.best_match().center_dec_deg=}")
+        print(f"{solution.best_match().scale_arcsec_per_pixel=}")
 ```
 
 `solve` is thread-safe. It can be called any number of times from the same `Solver` object.
 
 # Examples
 
+## Use the solver without `with`
+
+```py
+import astrometry
+
+solver = astrometry.Solver(...)
+solver.solve(...) # solve can be called multiple times
+solver.close() # close the index files used by the solver
+```
+
 ## Provide size and position hints
 
 ```py
 import astrometry
 
-solver = ...
-solution = solver.solve(
-    stars=...,
-    size_hint=astrometry.SizeHint(
-        lower_arcsec_per_pixel=1.0,
-        upper_arcsec_per_pixel=2.0,
-    ),
-    position_hint=astrometry.PositionHint(
-        ra_deg=65.7,
-        dec_deg=36.2,
-        radius_deg=1.0,
-    ),
-    solution_parameters=...
-)
+with astrometry.Solver(...) as solver:
+    solution = solver.solve(
+        stars=...,
+        size_hint=astrometry.SizeHint(
+            lower_arcsec_per_pixel=1.0,
+            upper_arcsec_per_pixel=2.0,
+        ),
+        position_hint=astrometry.PositionHint(
+            ra_deg=65.7,
+            dec_deg=36.2,
+            radius_deg=1.0,
+        ),
+        solution_parameters=...
+    )
 ```
 
 ## Print progress information (download and solve)
@@ -122,8 +138,8 @@ import logging
 
 logging.getLogger().setLevel(logging.INFO)
 
-solver = ...
-solution = ...
+with astrometry.Solver(...) as solver:
+    solution = solver.solve(...)
 ```
 
 ## Print field stars metadata
@@ -133,12 +149,12 @@ Astrometry extracts metadata from the star index ("series"). See [Choosing serie
 ```py
 import astrometry
 
-solver = ...
-solution = ...
+with astrometry.Solver(...) as solver:
+    solution = solver.solve(...)
 
-if solution.has_match():
-    for star in solution.best_match().stars:
-        print(f"{star.ra_deg}º, {star.dec_deg}º:", star.metadata)
+    if solution.has_match():
+        for star in solution.best_match().stars:
+            print(f"{star.ra_deg}º, {star.dec_deg}º:", star.metadata)
 ```
 
 ## Calculate field stars pixel positions with astropy
@@ -146,16 +162,16 @@ if solution.has_match():
 ```py
 import astrometry
 
-solver = ...
-solution = ...
+with astrometry.Solver(...) as solver:
+    solution = solver.solve(...)
 
-if solution.has_match():
-    wcs = solution.best_match().astropy_wcs()
-    pixels = wcs.all_world2pix(
-        [[star.ra_deg, star.dec_deg] for star in solution.best_match().stars],
-        0,
-    )
-    # pixels is a len(solution.best_match().stars) x 2 numpy array of float values
+    if solution.has_match():
+        wcs = solution.best_match().astropy_wcs()
+        pixels = wcs.all_world2pix(
+            [[star.ra_deg, star.dec_deg] for star in solution.best_match().stars],
+            0,
+        )
+        # pixels is a len(solution.best_match().stars) x 2 numpy array of float values
 ```
 
 `astropy.wcs.WCS` provides many more functions to probe the transformation properties and convert from and to pixel coordinates. See https://docs.astropy.org/en/stable/api/astropy.wcs.WCS.html for details. Astropy (https://pypi.org/project/astropy/) must be installed to use this method.
@@ -176,16 +192,16 @@ See [Choosing Series](#choosing-series) for a list of available series.
 ```py
 import astrometry
 
-solver = ...
-solution = solver.solve(
-    stars=...,
-    size_hint=...,
-    position_hint=...,
-    solution_parameters=astrometry.SolutionParameters(
-        sip_order=0,
-        tune_up_logodds_threshold=None,
-    ),
-)
+with astrometry.Solver(...) as solver:
+    solution = solver.solve(
+        stars=...,
+        size_hint=...,
+        position_hint=...,
+        solution_parameters=astrometry.SolutionParameters(
+            sip_order=0,
+            tune_up_logodds_threshold=None,
+        ),
+    )
 ```
 
 ## Stop the solver early using the log-odds callback
@@ -195,15 +211,15 @@ solution = solver.solve(
 ```py
 import astrometry
 
-solver = ...
-solution = solver.solve(
-    stars=...,
-    size_hint=...,
-    position_hint=...,
-    solution_parameters=astrometry.SolutionParameters(
-        logodds_callback=lambda logodds_list: astrometry.Action.STOP,
-    ),
-)
+with astrometry.Solver(...) as solver:
+    solution = solver.solve(
+        stars=...,
+        size_hint=...,
+        position_hint=...,
+        solution_parameters=astrometry.SolutionParameters(
+            logodds_callback=lambda logodds_list: astrometry.Action.STOP,
+        ),
+    )
 ```
 
 ### Return early if the best log-odds are larger than 100.0
@@ -211,19 +227,19 @@ solution = solver.solve(
 ```py
 import astrometry
 
-solver = ...
-solution = solver.solve(
-    stars=...,
-    size_hint=...,
-    position_hint=...,
-    solution_parameters=astrometry.SolutionParameters(
-        logodds_callback=lambda logodds_list: (
-            astrometry.Action.STOP
-            if logodds_list[0] > 100.0
-            else astrometry.Action.CONTINUE
+with astrometry.Solver(...) as solver:
+    solution = solver.solve(
+        stars=...,
+        size_hint=...,
+        position_hint=...,
+        solution_parameters=astrometry.SolutionParameters(
+            logodds_callback=lambda logodds_list: (
+                astrometry.Action.STOP
+                if logodds_list[0] > 100.0
+                else astrometry.Action.CONTINUE
+            ),
         ),
-    ),
-)
+    )
 ```
 
 ### Return early if there are at least ten matches
@@ -231,19 +247,19 @@ solution = solver.solve(
 ```py
 import astrometry
 
-solver = ...
-solution = solver.solve(
-    stars=...,
-    size_hint=...,
-    position_hint=...,
-    solution_parameters=astrometry.SolutionParameters(
-        logodds_callback=lambda logodds_list: (
-            astrometry.Action.STOP
-            if len(logodds_list) >= 10.0
-            else astrometry.Action.CONTINUE
+with astrometry.Solver(...) as solver:
+    solution = solver.solve(
+        stars=...,
+        size_hint=...,
+        position_hint=...,
+        solution_parameters=astrometry.SolutionParameters(
+            logodds_callback=lambda logodds_list: (
+                astrometry.Action.STOP
+                if len(logodds_list) >= 10.0
+                else astrometry.Action.CONTINUE
+            ),
         ),
-    ),
-)
+    )
 ```
 
 ### Return early if the three best matches are similar
@@ -259,15 +275,15 @@ def logodds_callback(logodds_list: list[float]) -> astrometry.Action:
     return astrometry.Action.CONTINUE
 
 
-solver = ...
-solution = solver.solve(
-    stars=...,
-    size_hint=...,
-    position_hint=...,
-    solution_parameters=astrometry.SolutionParameters(
-        logodds_callback=logodds_callback,
-    ),
-)
+with astrometry.Solver(...) as solver:
+    solution = solver.solve(
+        stars=...,
+        size_hint=...,
+        position_hint=...,
+        solution_parameters=astrometry.SolutionParameters(
+            logodds_callback=logodds_callback,
+        ),
+    )
 ```
 
 # Choosing series
@@ -277,7 +293,7 @@ This library downloads series from http://data.astrometry.net. A solver can be i
 ```py
 import astrometry
 
-solver = astrometry.Solver(
+with astrometry.Solver(
     astrometry.series_5200.index_files(
         cache_directory="astrometry_cache",
         scales={4, 5, 6},
@@ -286,7 +302,8 @@ solver = astrometry.Solver(
         cache_directory="astrometry_cache",
         scales={6, 7, 12},
     )
-)
+) as solver:
+    ...
 ```
 
 Astrometry.net gives the following recommendations to choose a scale:
@@ -340,6 +357,15 @@ class Solver:
         position_hint: typing.Optional[PositionHint],
         solution_parameters: SolutionParameters,
     ) -> Solution: ...
+
+    def __enter__(self) -> Solver: ...
+
+    def __exit__(
+        self,
+        exception_type: typing.Optional[typing.Type[BaseException]],
+        value: typing.Optional[BaseException],
+        traceback: typing.Optional[types.TracebackType],
+    ) -> bool: ...
 ```
 
 `solve` is thread-safe and can be called any number of times.
@@ -585,41 +611,58 @@ class SupportsFloatMapping(typing.Protocol):
 
 # Contribute
 
+## Clone the repository
+
 Clone this repository and pull its submodule:
 
-```
+```sh
 git clone --recursive https://github.com/neuromorphicsystems/astrometry.git
 cd astrometry
+cd astrometry.net
+git reset --hard 04e97d5365525ac429dca69b344f9f4d9070b739
+git apply ../astrometry.net.patch
+cd ..
 ```
 
 or
 
-```
+```sh
 git clone https://github.com/neuromorphicsystems/astrometry.git
 cd astrometry
 git submodule update --recursive
+cd astrometry.net
+git reset --hard 04e97d5365525ac429dca69b344f9f4d9070b739
+git apply ../astrometry.net.patch
+cd ..
 ```
 
-Format the code:
+After building, reset the patch changes to keep the submodule in a clean state
+
+```sh
+git reset --hard 04e97d5365525ac429dca69b344f9f4d9070b739
+```
+
+## Format and lint
 
 ```sh
 clang-format -i astrometry_extension/astrometry_extension.c astrometry_extension/astrometry_extension_utilities.h
+pip install '.[lint]'
+isort .; black .; pyright .
 ```
 
-Build a local version:
+## Build a local version
 
 ```sh
-python3 -m pip install -e .
-# use 'CC="ccache clang" python3 -m pip install -e .' to speed up incremental builds
+pip install -e . # use 'CC="ccache clang" pip install -e .' to speed up incremental builds
 ```
 
-# Publish
+## Publish
 
 1. Bump the version number in _setup.py_.
 
 2. Create a new release on GitHub.
 
-# MSVC compatibility (work in progress)
+## MSVC compatibility (work in progress)
 
 -   _fitsbin.c_, _kdtree_internal.c_, _kdtree_internal_fits.c_, _solver.c_: replace Variable Length Arrays (VAL) with \_alloca (`type name[size]` -> `type* name = _alloca(size)`)
 -   _fitsbin.c_, _fitsioutils.c_, _fitstable.c_: cast `void*` to `char*` to enable pointer arithmetic

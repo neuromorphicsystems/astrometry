@@ -1,0 +1,196 @@
+diff --git a/solver/solver.c b/solver/solver.c
+index fe1c66d0..f3987fda 100644
+--- a/solver/solver.c
++++ b/solver/solver.c
+@@ -1358,6 +1358,12 @@ static void resolve_matches(kdtree_qres_t* krez, const double *field_xy,
+         if (solver_handle_hit(solver, &mo, NULL, FALSE))
+             solver->quit_now = TRUE;
+ 
++        if (mo.sip != solver->best_match.sip)
++        {
++            sip_free(mo.sip);
++            mo.sip = NULL;
++        }
++
+         if (unlikely(solver->quit_now))
+             return;
+     }
+@@ -1409,6 +1415,7 @@ static int solver_handle_hit(solver_t* sp, MatchObj* mo, sip_t* verifysip,
+         // Since we tuned up this solution, we can't just accept the
+         // resulting log-odds at face value.
+         if (!fake_match) {
++            verify_free_matchobj(mo);
+             verify_hit(sp->index->starkd, sp->index->cutnside,
+                        mo, mo->sip, sp->vf, match_distance_in_pixels2,
+                        sp->distractor_ratio,
+@@ -1423,8 +1430,10 @@ static int solver_handle_hit(solver_t* sp, MatchObj* mo, sip_t* verifysip,
+         }
+     }
+ 
+-    if (mo->logodds < sp->logratio_toprint)
++    if (mo->logodds < sp->logratio_toprint) {
++        verify_free_matchobj(mo);
+         return FALSE;
++    }
+ 
+     // Also copy original field star coordinates
+     //mo.quadpix_orig
+@@ -1444,8 +1453,10 @@ static int solver_handle_hit(solver_t* sp, MatchObj* mo, sip_t* verifysip,
+ 
+     matchobj_print(mo, log_get_level());
+ 
+-    if (mo->logodds < sp->logratio_tokeep)
++    if (mo->logodds < sp->logratio_tokeep) {
++        verify_free_matchobj(mo);
+         return FALSE;
++    }
+ 
+     logverb("Pixel scale: %g arcsec/pix.\n", mo->scale);
+     logverb("Parity: %s.\n", (mo->parity ? "neg" : "pos"));
+diff --git a/solver/tweak2.c b/solver/tweak2.c
+index ee3150c4..75813246 100644
+--- a/solver/tweak2.c
++++ b/solver/tweak2.c
+@@ -277,8 +277,11 @@ sip_t* tweak2(const double* fieldxy, int Nfield,
+             // clean up from last round (we do it here so that they're
+             // valid when we leave the loop)
+             free(theta);
++            theta = NULL;
+             free(odds);
++            odds = NULL;
+             free(refperm);
++            refperm = NULL;
+ 
+             // Anneal
+             gamma = pow(0.9, step);
+@@ -312,11 +315,17 @@ sip_t* tweak2(const double* fieldxy, int Nfield,
+ 
+             if (Nin == 0) {
+                 sip_free(sipout);
++                sipout = NULL;
+                 free(matchxy);
++                matchxy = NULL;
+                 free(matchxyz);
++                matchxyz = NULL;
+                 free(weights);
++                weights = NULL;
+                 free(fieldsigma2s);
++                fieldsigma2s = NULL;
+                 free(indexpix);
++                indexpix = NULL;
+                 free(indexin);
+                 return NULL;
+             }
+@@ -362,7 +371,27 @@ sip_t* tweak2(const double* fieldxy, int Nfield,
+                                             W, H, distractors,
+                                             logodds_bail, LARGE_VAL,
+                                             &besti, &odds, &theta, NULL,
+-                                            &testperm, &refperm);
++                                            NULL, &refperm);
++
++            if (theta == NULL) {
++                free(refperm);
++                refperm = NULL;
++                sip_free(sipout);
++                sipout = NULL;
++                free(matchxy);
++                matchxy = NULL;
++                free(matchxyz);
++                matchxyz = NULL;
++                free(weights);
++                weights = NULL;
++                free(fieldsigma2s);
++                fieldsigma2s = NULL;
++                free(indexpix);
++                indexpix = NULL;
++                free(indexin);
++                indexin = NULL;
++                return NULL;
++            }
+ 
+             logverb("Logodds: %g\n", logodds);
+             verify_count_hits(theta, besti, &nmatch, &nconf, &ndist);
+@@ -427,13 +456,25 @@ sip_t* tweak2(const double* fieldxy, int Nfield,
+             if (Nmatch < 2) {
+                 logverb("No matches -- aborting tweak attempt\n");
+                 free(theta);
++                theta = NULL;
++                free(odds);
++                odds = NULL;
++                free(refperm);
++                refperm = NULL;
+                 sip_free(sipout);
++                sipout = NULL;
+                 free(matchxy);
++                matchxy = NULL;
+                 free(matchxyz);
++                matchxyz = NULL;
+                 free(weights);
++                weights = NULL;
+                 free(fieldsigma2s);
++                fieldsigma2s = NULL;
+                 free(indexpix);
++                indexpix = NULL;
+                 free(indexin);
++                indexin = NULL;
+                 return NULL;
+             }
+ 
+@@ -490,8 +531,11 @@ sip_t* tweak2(const double* fieldxy, int Nfield,
+         double pix2;
+ 
+         free(theta);
++        theta = NULL;
+         free(odds);
++        odds = NULL;
+         free(refperm);
++        refperm = NULL;
+         gamma = 1.0;
+         // Project reference sources into pixel space; keep the ones inside image bounds.
+         Nin = 0;
+@@ -526,7 +570,7 @@ sip_t* tweak2(const double* fieldxy, int Nfield,
+                                         W, H, distractors,
+                                         logodds_bail, LARGE_VAL,
+                                         &besti, &odds, &theta, NULL,
+-                                        &testperm, &refperm);
++                                        NULL, &refperm);
+         logverb("Logodds: %g\n", logodds);
+         verify_count_hits(theta, besti, &nmatch, &nconf, &ndist);
+         logverb("%i matches, %i distractors, %i conflicts (at best log-odds); %i field sources, %i index sources\n", nmatch, ndist, nconf, Nfield, Nin);
+@@ -558,12 +602,16 @@ sip_t* tweak2(const double* fieldxy, int Nfield,
+         }
+     }
+     free(theta);
++    theta = NULL;
+     free(refperm);
++    refperm = NULL;
+ 
+-    if (newodds)
++    if (newodds) {
+         *newodds = odds;
+-    else
++    } else {
+         free(odds);
++        odds = NULL;
++    }
+ 
+     logverb("Tweak2: final WCS:\n");
+     if (log_get_level() >= LOG_VERB)
+@@ -575,11 +623,17 @@ sip_t* tweak2(const double* fieldxy, int Nfield,
+         *p_besti = besti;
+ 
+     free(indexin);
++    indexin = NULL;
+     free(indexpix);
++    indexpix = NULL;
+     free(fieldsigma2s);
++    fieldsigma2s = NULL;
+     free(weights);
++    weights = NULL;
+     free(matchxyz);
++    matchxyz = NULL;
+     free(matchxy);
++    matchxy = NULL;
+ 
+     return sipout;
+ }

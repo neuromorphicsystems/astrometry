@@ -34,7 +34,22 @@ static match_vector_t match_vector_with_capacity(size_t capacity) {
     return match_vector;
 }
 
+static MatchObj* match_vector_pop(match_vector_t* match_vector) {
+    if (match_vector->size == 0) {
+        return NULL;
+    }
+    match_vector->size -= 1;
+    MatchObj* match = match_vector->data + match_vector->size;
+    verify_free_matchobj(match);
+    free(match->sip);
+    match->sip = NULL;
+    return match;
+}
+
 static void match_vector_clear(match_vector_t* match_vector) {
+    while (match_vector->size > 0) {
+        match_vector_pop(match_vector);
+    }
     if (match_vector->capacity > 0) {
         free(match_vector->data);
         match_vector->data = NULL;
@@ -44,19 +59,66 @@ static void match_vector_clear(match_vector_t* match_vector) {
 }
 
 static void match_vector_reserve(match_vector_t* match_vector, size_t capacity) {
+    printf("match_vector_reserve, capacity was %lu, requested capacity: %lu\n", match_vector->capacity, capacity); // @DEV
     if (capacity <= match_vector->capacity) {
         return;
+    }
+    if (match_vector->data == NULL) {
+        match_vector->data = malloc(sizeof(MatchObj) * capacity);
+    } else {
+        match_vector->data = realloc(match_vector->data, sizeof(MatchObj) * capacity);
     }
     match_vector->data = realloc(match_vector->data, sizeof(MatchObj) * capacity);
     match_vector->capacity = capacity;
 }
 
-static void match_vector_push(match_vector_t* match_vector, MatchObj* match) {
+static MatchObj* match_vector_push(match_vector_t* match_vector, MatchObj* match) {
     if (match_vector->size == match_vector->capacity) {
         match_vector_reserve(match_vector, match_vector->capacity == 0 ? 1 : match_vector->capacity * 2);
     }
     memcpy(match_vector->data + match_vector->size, match, sizeof(MatchObj));
+    MatchObj* inserted_match = match_vector->data + match_vector->size;
     match_vector->size += 1;
+    if (match->sip != NULL) {
+        sip_t* inserted_sip = malloc(sizeof(sip_t));
+        memcpy(inserted_sip, match->sip, sizeof(sip_t));
+        inserted_match->sip = inserted_sip;
+    }
+    inserted_match->refradec = NULL;
+    inserted_match->fieldxy = NULL;
+    inserted_match->fieldxy_orig = NULL;
+    inserted_match->theta = NULL;
+    inserted_match->matchodds = NULL;
+    inserted_match->testperm = NULL;
+    inserted_match->refxyz = NULL;
+    inserted_match->refxy = NULL;
+    inserted_match->refstarid = NULL;
+    return inserted_match;
+}
+
+static MatchObj* match_vector_bubble_last(match_vector_t* match_vector) {
+    if (match_vector->size == 0) {
+        return NULL;
+    }
+    if (match_vector->size == 1) {
+        return match_vector->data;
+    }
+    float last_logodds = (match_vector->data + match_vector->size - 1)->logodds;
+    size_t index = 0;
+    for (; index < match_vector->size - 1; ++index) {
+        if ((match_vector->data + index)->logodds < last_logodds) {
+            MatchObj last;
+            memcpy(&last, match_vector->data + match_vector->size - 1, sizeof(MatchObj));
+            memmove(
+                match_vector->data + index + 1,
+                match_vector->data + index,
+                (match_vector->size - 1 - index) * sizeof(MatchObj)
+            );
+            memcpy(match_vector->data + index, &last, sizeof(MatchObj));
+            break;
+        }
+    }
+    return match_vector->data + index;
 }
 
 static void simple_index_name(index_t* index, char** output) {
@@ -65,20 +127,25 @@ static void simple_index_name(index_t* index, char** output) {
         char* match_indexname = strdup(index->indexname);
         char* index_directory = strdup(dirname(match_indexname));
         free(match_indexname);
+        match_indexname = NULL;
         index_directory_name = strdup(basename(index_directory));
         free(index_directory);
+        index_directory = NULL;
     }
     char* index_name = NULL;
     {
         char* match_indexname = strdup(index->indexname);
         index_name = strdup(basename(match_indexname));
         free(match_indexname);
+        match_indexname = NULL;
     }
-    const size_t output_size = strlen(index_directory_name) + strlen(index_name) + 3;
+    const size_t output_size = strlen(index_directory_name) + strlen(index_name) + 4; // +4 for quotes, comma, and null separator
     *output = malloc(output_size);
     sprintf(*output, "\"%s/%s\"", index_directory_name, index_name);
     free(index_name);
+    index_name = NULL;
     free(index_directory_name);
+    index_directory_name = NULL;
 }
 
 typedef struct callback_context_t {
@@ -87,22 +154,24 @@ typedef struct callback_context_t {
     PyObject* builtins_bool;
     PyObject* logging;
     PyObject* logodds_callback;
-    PyObject* sorted_logodds_list;
+    PyObject* logodds_list;
     solver_t solver;
     double output_logodds_threshold;
     match_vector_t matches;
+    size_t maximum_matches;
     anbool error_occured;
 } callback_context_t;
 
 static anbool record_match_callback(MatchObj* match, void* userdata) {
     callback_context_t* context = (callback_context_t*)userdata;
+    MatchObj* inserted_match = match_vector_push(&context->matches, match);
     verify_hit(
         context->solver.index->starkd,
         context->solver.index->cutnside,
-        match,
-        match->sip,
+        inserted_match,
+        inserted_match->sip,
         context->solver.vf,
-        square(context->solver.verify_pix) + square(context->solver.index->index_jitter / match->scale),
+        square(context->solver.verify_pix) + square(context->solver.index->index_jitter / inserted_match->scale),
         context->solver.distractor_ratio,
         context->solver.field_maxx,
         context->solver.field_maxy,
@@ -111,88 +180,76 @@ static anbool record_match_callback(MatchObj* match, void* userdata) {
         context->solver.logratio_stoplooking,
         context->solver.distance_from_quad_bonus,
         FALSE);
-    if (match->logodds >= context->output_logodds_threshold) {
-        double ra = 0.0;
-        double dec = 0.0;
-        xyzarr2radecdeg(match->center, &ra, &dec);
-        char logodds_string[24];
-        snprintf(logodds_string, 24, "%g", match->logodds);
-        char scale_string[24];
-        snprintf(scale_string, 24, "%g", match->scale);
-        char ra_string[24];
-        snprintf(ra_string, 24, "%g", ra);
-        char dec_string[24];
-        snprintf(dec_string, 24, "%g", dec);
-        match_vector_push(&context->matches, match);
-        match->theta = NULL;
-        match->matchodds = NULL;
-        match->refxyz = NULL;
-        match->refxy = NULL;
-        match->refstarid = NULL;
-        match->testperm = NULL;
-        char* index_name = NULL;
-        simple_index_name(match->index, &index_name);
-        PyEval_RestoreThread(context->save);
-        PyObject* message = PyUnicode_FromFormat(
-            "solve %s: logodds=%s, matches=%d, conflicts=%d, distractors=%d, "
-            "ra=%s, dec=%s, scale=%s, index=%s",
-            context->solve_id,
-            logodds_string,
-            context->matches.data[context->matches.size - 1].nmatch,
-            context->matches.data[context->matches.size - 1].nconflict,
-            context->matches.data[context->matches.size - 1].ndistractor,
-            ra_string,
-            dec_string,
-            scale_string,
-            index_name);
-        PyObject_CallMethod(context->logging, "info", "O", message);
-        Py_DECREF(message);
-        free(index_name);
-        anbool inserted_or_error = FALSE;
-        for (Py_ssize_t index = 0; index < PyList_Size(context->sorted_logodds_list); ++index) {
-            const double value = PyFloat_AsDouble(PyList_GET_ITEM(context->sorted_logodds_list, index));
-            if (PyErr_Occurred()) {
-                inserted_or_error = TRUE;
-                break;
-            }
-            if (match->logodds > value) {
-                PyObject* logodds = PyFloat_FromDouble(match->logodds);
-                PyList_Insert(context->sorted_logodds_list, index, logodds);
-                Py_DECREF(logodds);
-                inserted_or_error = TRUE;
-                break;
-            }
+    if (inserted_match->logodds >= context->output_logodds_threshold) {
+        inserted_match = match_vector_bubble_last(&context->matches);
+        anbool added = TRUE;
+        if (context->maximum_matches > 0 && context->matches.size > context->maximum_matches) {
+            added = match_vector_pop(&context->matches) != inserted_match;
         }
-        if (!inserted_or_error) {
-            PyObject* logodds = PyFloat_FromDouble(match->logodds);
-            PyList_Append(context->sorted_logodds_list, logodds);
-            Py_DECREF(logodds);
-        }
-        if (PyErr_Occurred()) {
-            context->error_occured = TRUE;
-            context->solver.quit_now = TRUE;
-        } else {
-            PyObject* action = PyObject_CallFunction(context->logodds_callback, "O", context->sorted_logodds_list);
+        if (added) {
+            double ra = 0.0;
+            double dec = 0.0;
+            xyzarr2radecdeg(inserted_match->center, &ra, &dec);
+            char logodds_string[24];
+            snprintf(logodds_string, 24, "%g", inserted_match->logodds);
+            char scale_string[24];
+            snprintf(scale_string, 24, "%g", inserted_match->scale);
+            char ra_string[24];
+            snprintf(ra_string, 24, "%g", ra);
+            char dec_string[24];
+            snprintf(dec_string, 24, "%g", dec);
+            char* index_name = NULL;
+            simple_index_name(inserted_match->index, &index_name);
+            PyEval_RestoreThread(context->save);
+            PyObject* message = PyUnicode_FromFormat(
+                "solve %s: logodds=%s, matches=%d, conflicts=%d, distractors=%d, "
+                "ra=%s, dec=%s, scale=%s, index=%s",
+                context->solve_id,
+                logodds_string,
+                inserted_match->nmatch,
+                inserted_match->nconflict,
+                inserted_match->ndistractor,
+                ra_string,
+                dec_string,
+                scale_string,
+                index_name);
+            PyObject_CallMethod(context->logging, "info", "O", message);
+            Py_DECREF(message);
+            free(index_name);
+            index_name = NULL;
+            while (PyList_Size(context->logodds_list) < context->matches.size) {
+                PyList_Append(context->logodds_list, Py_None);
+            }
+            for (Py_ssize_t index = 0; index < PyList_Size(context->logodds_list); ++index) {
+                PyList_SetItem(context->logodds_list, index, PyFloat_FromDouble((context->matches.data + index)->logodds));
+            }
             if (PyErr_Occurred()) {
                 context->error_occured = TRUE;
                 context->solver.quit_now = TRUE;
             } else {
-                PyObject* action_as_boolean = PyObject_CallFunction(context->builtins_bool, "O", action);
+                PyObject* action = PyObject_CallFunction(context->logodds_callback, "O", context->logodds_list);
                 if (PyErr_Occurred()) {
                     context->error_occured = TRUE;
                     context->solver.quit_now = TRUE;
-                } else if (action_as_boolean == Py_False) {
-                    context->solver.quit_now = TRUE;
+                } else {
+                    PyObject* action_as_boolean = PyObject_CallFunction(context->builtins_bool, "O", action);
+                    if (PyErr_Occurred()) {
+                        context->error_occured = TRUE;
+                        context->solver.quit_now = TRUE;
+                    } else if (action_as_boolean == Py_False) {
+                        context->solver.quit_now = TRUE;
+                    }
                 }
             }
-        }
-        const int signal = PyErr_CheckSignals();
-        context->save = PyEval_SaveThread();
-        if (signal != 0) {
-            context->error_occured = TRUE;
-            context->solver.quit_now = TRUE;
+            const int signal = PyErr_CheckSignals();
+            context->save = PyEval_SaveThread();
+            if (signal != 0) {
+                context->error_occured = TRUE;
+                context->solver.quit_now = TRUE;
+            }
         }
     } else {
+        match_vector_pop(&context->matches);
         PyEval_RestoreThread(context->save);
         const int signal = PyErr_CheckSignals();
         context->save = PyEval_SaveThread();
@@ -216,6 +273,8 @@ static time_t timer_callback(void* userdata) {
     return context->solver.quit_now ? 0 : 1;
 }
 
+static const char* filter_message = "Too few correspondences for the SIP order specified";
+
 static void error_callback(
     void* userdata,
     err_t* error_state,
@@ -224,6 +283,9 @@ static void error_callback(
     const char* func,
     const char* format,
     va_list va) {
+    if (strncmp(format, filter_message, strlen(filter_message)) == 0) {
+        return;
+    }
     callback_context_t* context = (callback_context_t*)userdata;
     PyEval_RestoreThread(context->save);
     PyObject* message = NULL;
@@ -251,6 +313,7 @@ static void error_callback(
             Py_DECREF(part2);
         }
         free(new_format);
+        new_format = NULL;
     }
     PyObject_CallMethod(context->logging, "error", "O", message);
     context->save = PyEval_SaveThread();
@@ -341,6 +404,7 @@ tagalong_to_python_object(startree_t* tree, int column_index, const char* column
         }
     }
     free(row);
+    row = NULL;
     if (result == NULL) {
         Py_INCREF(Py_None);
         result = Py_None;
@@ -377,7 +441,7 @@ static void add_wcs_field(PyObject* wcs_fields, const char* name, PyObject* valu
 }
 
 static void add_wcs_sip_polynomial(PyObject* wcs_fields, const char* format, int order, const double* data, const char* comment) {
-    char name[7];
+    char name[9]; // at most 9 characters (AP_10_10 + null terminator)
     // in SIP, data[i * SIP_MAXORDER + j] = 0 if i + j > order
     for (int i = 0; i <= order; ++i) {
         for (int j = 0; i + j <= order; ++j) {
@@ -409,12 +473,15 @@ static fitstable_t* get_tagalong(startree_t* star_tree) {
         char* type = fits_get_dupstring(header, "AN_FILE");
         if (streq(type, AN_FILETYPE_TAGALONG)) {
             free(type);
+            type = NULL;
             extension = index;
             break;
         }
         free(type);
+        type = NULL;
     }
     if (extension == -1) {
+        fitstable_close(tag);
         return NULL;
     }
     fitstable_open_extension(tag, extension);

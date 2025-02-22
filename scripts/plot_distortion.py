@@ -1,6 +1,7 @@
 import argparse
-import astropy.wcs
 import json
+
+import astropy.wcs
 import numpy
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -74,14 +75,14 @@ with open(args.input) as wcs_fields_file:
     )
 
 if args.foc2pix:
-    transformation = wcs.sip.foc2pix
+    transformation = wcs.sip.foc2pix  # type: ignore
 else:
-    transformation = wcs.sip.pix2foc
+    transformation = wcs.sip.pix2foc  # type: ignore
 
 lines: list[numpy.ndarray] = []
 distorted_lines: list[numpy.ndarray] = []
-x_range = [numpy.Infinity, -numpy.Infinity]
-y_range = [numpy.Infinity, -numpy.Infinity]
+x_range = [numpy.inf, -numpy.inf]
+y_range = [numpy.inf, -numpy.inf]
 offset = transformation(
     numpy.array([[(args.left + args.right) / 2, (args.bottom + args.top) / 2]]), 0
 )

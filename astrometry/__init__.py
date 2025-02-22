@@ -1,5 +1,3 @@
-from __future__ import annotations
-import astrometry_extension
 import dataclasses
 import enum
 import json
@@ -7,11 +5,17 @@ import math
 import operator
 import pathlib
 import threading
+import types
 import typing
+
+if typing.TYPE_CHECKING:
+    import astrometry_extension_types as astrometry_extension
+else:
+    import astrometry_extension
+
 from .series import CHUNK_SIZE as CHUNK_SIZE
 from .series import DOWNLOAD_SUFFIX as DOWNLOAD_SUFFIX
 from .series import TIMEOUT as TIMEOUT
-from .series import size_to_string as size_to_string
 from .series import Series as Series
 from .series import series_4100 as series_4100
 from .series import series_4200 as series_4200
@@ -20,15 +24,14 @@ from .series import series_5200 as series_5200
 from .series import series_5200_heavy as series_5200_heavy
 from .series import series_6000 as series_6000
 from .series import series_6100 as series_6100
-
+from .series import size_to_string as size_to_string
 
 DEFAULT_LOWER_ARCSEC_PER_PIXEL = 0.1
 DEFAULT_UPPER_ARCSEC_PER_PIXEL = 1000.0
 
 
 class SupportsFloatMapping(typing.Protocol):
-    def __getitem__(self, index: typing.SupportsIndex, /) -> typing.SupportsFloat:
-        ...
+    def __getitem__(self, index: typing.SupportsIndex, /) -> typing.SupportsFloat: ...
 
 
 @dataclasses.dataclass
@@ -83,17 +86,21 @@ def batches_generator(
 @dataclasses.dataclass
 class SolutionParameters:
     solve_id: typing.Optional[str] = None
-    uniformize_index: bool = True  # uniformize field stars at the matched index scale before verifying a match
+    uniformize_index: bool = (
+        True  # uniformize field stars at the matched index scale before verifying a match
+    )
     deduplicate: bool = True  # de-duplicate field stars before verifying a match
     sip_order: int = 3  # 0 means "no SIP distortion"
     sip_inverse_order: int = 0  # 0 means "same as sip_order"
-    distance_from_quad_bonus: bool = True  # Assume that stars far from the matched quad will have larger positional variance?
+    distance_from_quad_bonus: bool = (
+        True  # Assume that stars far from the matched quad will have larger positional variance?
+    )
     positional_noise_pixels: float = 1.0
     distractor_ratio: float = 0.25
     code_tolerance_l2_distance: float = 0.01
-    minimum_quad_size_pixels: typing.Optional[
-        float
-    ] = None  # None means "use minimum_quad_size_fraction"
+    minimum_quad_size_pixels: typing.Optional[float] = (
+        None  # None means "use minimum_quad_size_fraction"
+    )
     minimum_quad_size_fraction: float = 0.1
     maximum_quad_size_pixels: float = 0.0  # 0.0 means "infinity"
     maximum_quads: int = 0  # number of field quads to try, 0 means no limit
@@ -101,9 +108,9 @@ class SolutionParameters:
     parity: Parity = Parity.BOTH
     tune_up_logodds_threshold: typing.Optional[float] = 14.0  # None means "no tune-up"
     output_logodds_threshold: float = 21.0
-    slices_generator: typing.Callable[
-        [int], typing.Iterable[tuple[int, int]]
-    ] = batches_generator(25)
+    slices_generator: typing.Callable[[int], typing.Iterable[tuple[int, int]]] = (
+        batches_generator(25)
+    )
     logodds_callback: typing.Callable[[list[float]], Action] = lambda _: Action.CONTINUE
 
     def __post_init__(self):
@@ -140,8 +147,8 @@ class Match:
     wcs_fields: dict[str, tuple[typing.Any, str]]
 
     def astropy_wcs(self):
-        import astropy.wcs
         import astropy.io.fits
+        import astropy.wcs
 
         return astropy.wcs.WCS(
             astropy.io.fits.Header(
@@ -155,10 +162,6 @@ class Match:
 class Solution:
     solve_id: str
     matches: list[Match]
-
-    def __post_init__(self):
-        if len(self.matches) > 0:
-            self.matches.sort(key=operator.attrgetter("logodds"), reverse=True)
 
     def has_match(self) -> bool:
         return len(self.matches) > 0
@@ -207,11 +210,27 @@ class Solution:
         )
 
 
-class Solver(astrometry_extension.Solver):
+class Solver:
     def __init__(self, index_files: list[pathlib.Path]):
-        super().__init__([str(path.resolve()) for path in index_files])
+        self.inner: typing.Optional[astrometry_extension.Solver] = (
+            astrometry_extension.Solver([str(path.resolve()) for path in index_files])
+        )
         self.solve_id_lock = threading.Lock()
         self.solve_id = 0
+
+    def __enter__(self) -> "Solver":
+        return self
+
+    def __exit__(
+        self,
+        exception_type: typing.Optional[typing.Type[BaseException]],
+        value: typing.Optional[BaseException],
+        traceback: typing.Optional[types.TracebackType],
+    ) -> bool:
+        if self.inner is not None:
+            self.inner.close()
+            self.inner = None
+        return False
 
     def solve(
         self,
@@ -220,9 +239,9 @@ class Solver(astrometry_extension.Solver):
         position_hint: typing.Optional[PositionHint],
         solution_parameters: SolutionParameters,
     ) -> Solution:
+        assert self.inner is not None
         with self.solve_id_lock:
             self.solve_id += 1
-
         stars_xs: list[float] = []
         stars_ys: list[float] = []
         for star in stars:
@@ -273,17 +292,20 @@ class Solver(astrometry_extension.Solver):
             solution_parameters.maximum_quad_size_pixels == 0.0
             or minimum_quad_size_pixels < solution_parameters.maximum_quad_size_pixels
         )
-        raw_solution = super().solve(
+        print(f"{minimum_quad_size_pixels=}") # @DEV
+        raw_solution = self.inner.solve(
             stars_xs if isinstance(stars_xs, list) else list(stars_xs),
             stars_ys if isinstance(stars_ys, list) else list(stars_ys),
             size_hint.lower_arcsec_per_pixel,
             size_hint.upper_arcsec_per_pixel,
-            None
-            if position_hint is None
-            else (
-                position_hint.ra_deg,
-                position_hint.dec_deg,
-                position_hint.radius_deg,
+            (
+                None
+                if position_hint is None
+                else (
+                    position_hint.ra_deg,
+                    position_hint.dec_deg,
+                    position_hint.radius_deg,
+                )
             ),
             solve_id,
             solution_parameters.uniformize_index,

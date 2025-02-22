@@ -1,12 +1,12 @@
-from __future__ import annotations
 import collections
 import dataclasses
 import logging
 import os
 import pathlib
-import requests
 import threading
 import typing
+
+import requests
 
 CHUNK_SIZE = 1048576
 DOWNLOAD_SUFFIX = ".download"
@@ -95,7 +95,7 @@ class Series:
         elif isinstance(cache_directory, str):
             cache_directory = pathlib.Path(cache_directory).resolve()
         else:
-            cache_directory = pathlib.Path(cache_directory)
+            cache_directory = pathlib.Path(cache_directory)  # type: ignore
         assert isinstance(cache_directory, pathlib.Path)
         cache_directory = cache_directory.resolve() / self.name
         cache_directory.mkdir(parents=True, exist_ok=True)

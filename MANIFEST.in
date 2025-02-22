@@ -1,4 +1,3 @@
-include test.py
 recursive-include astrometry.net/gsl-an *.h *.c
 include astrometry.net/libkd/*.h
 include astrometry.net/libkd/kdtree_internal.c

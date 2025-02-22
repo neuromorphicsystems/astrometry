@@ -5,3 +5,4 @@ build
 wheelhouse
 __pycache__
 test/solution.json
+.venv

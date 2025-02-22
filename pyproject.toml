@@ -1,3 +1,39 @@
+[project]
+name = "astrometry"
+description = "Astrometry.net solver interface"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Alexandre Marcireau", email = "alexandre.marcireau@gmail.com" },
+]
+requires-python = ">=3.9"
+dependencies = ["requests>=1.26"]
+version = "4.2.0"
+
+[project.urls]
+homepage = "https://github.com/neuromorphicsystems/astrometry/"
+repository = "https://github.com/neuromorphicsystems/astrometry/"
+documentation = "https://github.com/neuromorphicsystems/astrometry/"
+
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["build", "setuptools"]
 build-backend = "setuptools.build_meta"
+
+[project.optional-dependencies]
+astropy = ["astropy>=5"]
+lint = ["isort", "black", "pyright"]
+plot = ["numpy>=1.26"]
+tests = ["astropy>=5", "psutil==6.1.1", "numpy>=1.26"]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+executionEnvironments = [{ root = ".", venv = ".venv" }]
+exclude = ["**/__pycache__", "**/.*", "astrometry.net"]
+
+[tool.isort]
+profile = "black"
+sort_reexports = true
+extend_skip = ["astrometry.net"]
+
+[tool.black]
+extend-exclude = "astrometry.net"

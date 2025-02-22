@@ -1,15 +1,11 @@
 import pathlib
 import platform
+
 import setuptools
 import setuptools.command.build_py
 import setuptools.extension
 
-dirname = pathlib.Path(__file__).resolve().parent
-
-with open(dirname / "README.md") as file:
-    long_description = file.read()
-
-extra_compile_args = []
+extra_compile_args = [] # DEBUG: ["-g", "-O0"], REL: []
 extra_link_args = []
 define_macros = []
 include_dirs = [
@@ -24,7 +20,9 @@ sources = [
     "astrometry.net/gsl-an/block/init.c",
     *(
         str(path.as_posix())
-        for path in sorted((dirname / "astrometry.net" / "gsl-an" / "cblas").iterdir())
+        for path in sorted(
+            (pathlib.Path("astrometry.net") / "gsl-an" / "cblas").iterdir()
+        )
         if path.suffix == ".c" and path.name != "hypot.c"
     ),
     "astrometry.net/gsl-an/err/error.c",
@@ -121,24 +119,16 @@ if compiler.startswith("Clang") or compiler.startswith("GCC"):
 class BuildCommand(setuptools.command.build_py.build_py):
     def run(self):
         with open(
-            dirname
-            / "astrometry.net"
+            pathlib.Path("astrometry.net")
             / "include"
             / "astrometry"
             / "os-features-config.h",
             "w",
         ) as output:
-            output.write(
-                "\n".join(
-                    (
-                        "#define HAVE_NETPBM 0",
-                        '#define AN_GIT_REVISION "0.89-7-g47849f04"',
-                        '#define AN_GIT_DATE "Fri Jan 28 16:25:01 2022 -0500"',
-                        '#define AN_GIT_URL "https://github.com/dstndstn/astrometry.net"\n',
-                    )
-                )
-            )
-        with open(dirname / "astrometry.net" / "gsl-an" / "config.h", "w") as output:
+            output.write("#define HAVE_NETPBM 0\n")
+        with open(
+            pathlib.Path("astrometry.net") / "gsl-an" / "config.h", "w"
+        ) as output:
             output.write(
                 "\n".join(
                     (
@@ -149,7 +139,7 @@ class BuildCommand(setuptools.command.build_py.build_py):
                         "#define HAVE_DECL_EXPM1 1",
                         "#define HAVE_DECL_FEENABLEEXCEPT 0",
                         "#define HAVE_DECL_FESETTRAPENABLE 0",
-                        "#define HAVE_DECL_FINITE 1",
+                        "#define HAVE_DECL_FINITE 0",
                         "#define HAVE_DECL_FREXP 1",
                         "#define HAVE_DECL_HYPOT 1",
                         "#define HAVE_DECL_ISFINITE 1",
@@ -240,7 +230,8 @@ class BuildCommand(setuptools.command.build_py.build_py):
                         "#if defined(GSL_RANGE_CHECK_OFF) || !defined(GSL_RANGE_CHECK)",
                         "#define GSL_RANGE_CHECK 0",
                         "#endif",
-                        "#define RETURN_IF_NULL(x) if (!x) { return ; }\n",
+                        "#define RETURN_IF_NULL(x) if (!x) { return ; }",
+                        "",
                     )
                 )
             )
@@ -248,20 +239,6 @@ class BuildCommand(setuptools.command.build_py.build_py):
 
 
 setuptools.setup(
-    name="astrometry",
-    version="4.1.2",
-    url="https://github.com/neuromorphicsystems/astrometry",
-    author="ICNS, Alexandre Marcireau",
-    author_email="alexandre.marcireau@gmail.com",
-    description="Astrometry.net solver interface",
-    long_description=long_description,
-    long_description_content_type="text/markdown",
-    install_requires=["requests"],
-    classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
-        "Operating System :: OS Independent",
-    ],
     cmdclass={
         "build_py": BuildCommand,
     },

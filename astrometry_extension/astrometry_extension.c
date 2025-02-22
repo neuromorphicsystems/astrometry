@@ -4,12 +4,25 @@ typedef struct astrometry_extension_solver_t {
     PyObject_HEAD pl* indexes;
 } astrometry_extension_solver_t;
 
-static void astrometry_extension_solver_dealloc(PyObject* self) {
+static void solver_close(PyObject* self) {
     astrometry_extension_solver_t* current = (astrometry_extension_solver_t*)self;
     if (current->indexes) {
+        for (size_t position = 0; position < pl_size(current->indexes); ++position) {
+            index_free(pl_get(current->indexes, position));
+        }
         pl_remove_all(current->indexes);
+        pl_free(current->indexes);
         current->indexes = NULL;
     }
+}
+
+static PyObject* astrometry_extension_solver_close(PyObject* self, PyObject* args) {
+    solver_close(self);
+    Py_RETURN_NONE;
+}
+
+static void astrometry_extension_solver_dealloc(PyObject* self) {
+    solver_close(self);
     Py_TYPE(self)->tp_free(self);
 }
 
@@ -46,14 +59,15 @@ static int astrometry_extension_solver_init(PyObject* self, PyObject* args, PyOb
         }
         index_t* index = calloc(1, sizeof(index_t));
         index->fits = fits;
-        index->indexfn = (char*)filename;
+        index->indexfn = strdup(filename);
         if (index_reload(index) != 0) {
             anqfits_close(index->fits);
+            free(index->indexfn);
             free(index);
+            index = NULL;
             PyErr_Format(PyExc_TypeError, "loading \"%s\" failed", filename);
             break;
         }
-        index->indexfn = strdup(index->indexfn);
         index->indexname = strdup(quadfile_get_filename(index->quads));
         index->index_scale_upper = quadfile_get_index_scale_upper_arcsec(index->quads);
         index->index_scale_lower = quadfile_get_index_scale_lower_arcsec(index->quads);
@@ -82,11 +96,13 @@ static int astrometry_extension_solver_init(PyObject* self, PyObject* args, PyOb
         index->circle = qfits_header_getboolean(index->codekd->header, "CIRCLE", 0);
         index->cx_less_than_dx = qfits_header_getboolean(index->codekd->header, "CXDX", FALSE);
         index->meanx_less_than_half = qfits_header_getboolean(index->codekd->header, "CXDXLT1", FALSE);
+        index_unload(index);
         pl_append(current->indexes, index);
     }
     if (PyErr_Occurred()) {
         if (current->indexes) {
             pl_remove_all(current->indexes);
+            pl_free(current->indexes);
             current->indexes = NULL;
         }
         return -1;
@@ -95,6 +111,7 @@ static int astrometry_extension_solver_init(PyObject* self, PyObject* args, PyOb
     if (!logging) {
         if (current->indexes) {
             pl_remove_all(current->indexes);
+            pl_free(current->indexes);
             current->indexes = NULL;
         }
         return -1;
@@ -253,6 +270,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         if (PyErr_Occurred() || slices[index * 2 + 0] < 0 || slices[index * 2 + 1] > stars_size
             || slices[index * 2 + 0] >= slices[index * 2 + 1]) {
             free(slices);
+            slices = NULL;
             PyErr_SetString(
                 PyExc_TypeError,
                 "slices_starts and slices_end must contain integers in the range [0, len(stars)[, and slices_starts[i] must be "
@@ -268,8 +286,8 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     if (!builtins_bool) {
         return NULL;
     }
-    PyObject* sorted_logodds_list = PyList_New(0);
-    if (!sorted_logodds_list) {
+    PyObject* logodds_list = PyList_New(0);
+    if (!logodds_list) {
         return NULL;
     }
 
@@ -290,13 +308,19 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     if (pl_size(selected_indexes) == 0) {
         PyErr_SetString(PyExc_TypeError, "index files do not overlap the provided position and scale hints");
         pl_remove_all(selected_indexes);
+        pl_free(selected_indexes);
+        selected_indexes = NULL;
         free(slices);
+        slices = NULL;
         return NULL;
     }
     PyObject* logging = PyImport_ImportModule("logging");
     if (!logging) {
         pl_remove_all(selected_indexes);
+        pl_free(selected_indexes);
+        selected_indexes = NULL;
         free(slices);
+        slices = NULL;
         return NULL;
     }
     {
@@ -335,8 +359,11 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         PyErr_Clear();
         PyErr_SetString(PyExc_TypeError, "items in stars_xs and stars_ys must be floats");
         pl_remove_all(selected_indexes);
+        pl_free(selected_indexes);
+        selected_indexes = NULL;
         Py_DECREF(logging);
         free(slices);
+        slices = NULL;
         return NULL;
     }
     callback_context_t context = {
@@ -345,7 +372,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         .builtins_bool = builtins_bool,
         .logging = logging,
         .logodds_callback = logodds_callback,
-        .sorted_logodds_list = sorted_logodds_list,
+        .logodds_list = logodds_list,
         .solver =
             {
                 // input fields
@@ -382,7 +409,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
                 .logratio_bail_threshold = -1000.0,
                 .logratio_stoplooking = LARGE_VAL,
                 .maxquads = maximum_quads,
-                .maxmatches = maximum_matches,
+                .maxmatches = 0,
                 .set_crpix = FALSE,
                 .set_crpix_center = FALSE,
                 .crpix = {0.0, 0.0},
@@ -428,6 +455,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
             },
         .output_logodds_threshold = output_logodds_threshold,
         .matches = match_vector_with_capacity(8),
+        .maximum_matches = maximum_matches,
         .error_occured = FALSE,
     };
     {
@@ -449,6 +477,11 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         anbool inner_break = FALSE;
         for (size_t position = 0; position < selected_indexes_size; ++position) {
             index_t* index = pl_get(selected_indexes, position);
+            if (index_reload(index) != 0) {
+                PyErr_Format(PyExc_TypeError, "loading \"%s\" failed", index->indexfn);
+                inner_break = TRUE;
+                break;
+            }
             {
                 char* index_name = NULL;
                 simple_index_name(index, &index_name);
@@ -467,14 +500,24 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
                 Py_DECREF(message);
                 context.save = PyEval_SaveThread();
                 free(index_name);
+                index_name = NULL;
             }
             pl_append(context.solver.indexes, index);
+            if (context.solver.have_best_match) {
+                verify_free_matchobj(&context.solver.best_match);
+            }
             solver_reset_counters(&context.solver);
             solver_reset_best_match(&context.solver);
             context.solver.have_best_match = TRUE;
+            // we handle best match detection in the callback directly
+            // we set logodds to a large value to bypass the built-in best match logic
             context.solver.best_match.logodds = LARGE_VAL;
             solver_run(&context.solver);
             pl_remove_all(context.solver.indexes);
+            // context.solver.indexes will be re-used in the next iteration
+            // it should not be freed here.
+            // note that we set context.solver.index (not context.solver.indexes)
+            // to NULL below.
             context.solver.index = NULL;
             PyEval_RestoreThread(context.save);
             if (PyErr_CheckSignals() != 0) {
@@ -492,6 +535,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         }
     }
     free(slices);
+    slices = NULL;
     {
         err_t* errors_state = errors_get_state();
         errors_state->errfunc = NULL;
@@ -504,13 +548,20 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
         if (!PyErr_Occurred()) {
             PyErr_SetNone(PyExc_KeyboardInterrupt);
         }
+        pl_remove_all(context.solver.indexes);
+        pl_free(context.solver.indexes);
         context.solver.indexes = NULL;
         context.solver.fieldxy_orig = NULL;
         starxy_free_data(&starxy);
         solver_cleanup(&context.solver);
+        for (size_t position = 0; position < selected_indexes_size; ++position) {
+            index_unload(pl_get(selected_indexes, position));
+        }
         pl_remove_all(selected_indexes);
+        pl_free(selected_indexes);
+        selected_indexes = NULL;
         Py_DECREF(logging);
-        Py_DECREF(sorted_logodds_list);
+        Py_DECREF(logodds_list);
         return NULL;
     }
     PyObject* result = NULL;
@@ -673,31 +724,10 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
             PyTuple_SET_ITEM(python_match, 6, match_quad_stars);
             PyTuple_SET_ITEM(python_match, 7, wcs_fields);
             PyTuple_SET_ITEM(matches, index, python_match);
-            if (has_tune_up) {
-                free(match->sip);
-            }
-            free(match->refradec);
-            free(match->fieldxy);
-            free(match->fieldxy_orig);
-            free(match->theta);
-            free(match->matchodds);
-            free(match->testperm);
-            free(match->refxyz);
-            free(match->refxy);
-            free(match->refstarid);
+            verify_free_matchobj(match);
+            free(match->sip);
             match->sip = NULL;
-            match->refradec = NULL;
-            match->fieldxy = NULL;
-            match->fieldxy_orig = NULL;
-            match->tagalong = NULL;
-            match->field_tagalong = NULL;
             match->index = NULL;
-            match->theta = NULL;
-            match->matchodds = NULL;
-            match->testperm = NULL;
-            match->refxyz = NULL;
-            match->refxy = NULL;
-            match->refstarid = NULL;
         }
         result = PyTuple_New(2);
         PyTuple_SET_ITEM(result, 0, stars);
@@ -708,13 +738,19 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
     }
     match_vector_clear(&context.matches);
     pl_remove_all(context.solver.indexes);
+    pl_free(context.solver.indexes);
     context.solver.indexes = NULL;
     context.solver.fieldxy_orig = NULL;
     starxy_free_data(&starxy);
     solver_cleanup(&context.solver);
+    for (size_t position = 0; position < selected_indexes_size; ++position) {
+        index_unload(pl_get(selected_indexes, position));
+    }
     pl_remove_all(selected_indexes);
+    pl_free(selected_indexes);
+    selected_indexes = NULL;
     Py_DECREF(logging);
-    Py_DECREF(sorted_logodds_list);
+    Py_DECREF(logodds_list);
     return result;
 }
 
@@ -726,6 +762,7 @@ static PyTypeObject astrometry_extension_solver_type = {PyVarObject_HEAD_INIT(NU
 
 static PyMethodDef astrometry_extension_solver_methods[] = {
     {"solve", astrometry_extension_solver_solve, METH_VARARGS, NULL},
+    {"close", astrometry_extension_solver_close, METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL},
 };
 

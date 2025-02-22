@@ -1,53 +1,100 @@
 name: Build
 
 on:
-    push:
-    pull_request:
-    release:
-        types:
-            - published
+  push:
+  pull_request:
+  release:
+    types:
+      - published
 
 env:
-    CIBW_ARCHS_MACOS: x86_64 arm64
-    CIBW_BEFORE_BUILD_LINUX: "if command -v apk &> /dev/null; then apk add bsd-compat-headers; fi"
+  CIBW_SKIP: cp36-* cp37-* cp38-* pp* *i686 *win32
+
+  # cibuildhweel macOS configuration
+  CIBW_ARCHS_MACOS: native
+
+  # cibuildhweel linux configuration
+  CIBW_ARCHS_LINUX: x86_64
+  CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+  CIBW_MUSLLINUX_X86_64_IMAGE: musllinux_1_2
+  # On Linux, wheels are built inside a container on the GitHub runner (unlike macOS and Windows which use the GitHub runner directly)
+  # Any build dependencies must thus be installed on the container (using CIBW_BEFORE_ALL_LINUX), *not* on the runner with the regular workflow
+  # This command must be compatible with manylinux_2_28 (AlmaLinux 8) and musllinux_1_2 (Alpine Linux 3.20)
+  CIBW_BEFORE_ALL_LINUX: if command -v apk &> /dev/null; then apk add bsd-compat-headers; fi
+  CIBW_ENVIRONMENT_LINUX: 'PATH="$HOME/.cargo/bin:$PATH"'
 
 jobs:
-    build_wheels:
-        name: Build wheels on ${{ matrix.os }}
-        runs-on: ${{ matrix.os }}
-        strategy:
-            matrix:
-                os: [ubuntu-22.04, macos-12]
-        steps:
-            - uses: actions/checkout@v4
-              with:
-                  submodules: true
-            - name: Build wheels
-              uses: pypa/cibuildwheel@v2.18.1
-            - uses: actions/upload-artifact@v3
-              with:
-                  path: ./wheelhouse/*.whl
-    build_sdist:
-        name: Build source distribution
-        runs-on: ubuntu-22.04
-        steps:
-            - uses: actions/checkout@v4
-              with:
-                  submodules: true
-            - name: Build sdist
-              run: pipx run build --sdist
-            - uses: actions/upload-artifact@v3
-              with:
-                  path: dist/*.tar.gz
-    upload_pypi:
-        needs: [build_wheels, build_sdist]
-        runs-on: ubuntu-22.04
-        if: github.event_name == 'release' && github.event.action == 'published'
-        steps:
-            - uses: actions/download-artifact@v3
-              with:
-                  name: artifact
-                  path: dist
-            - uses: pypa/gh-action-pypi-publish@v1.8.10
-              with:
-                  password: ${{ secrets.PYPI_API_TOKEN }}
+  build_wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # macos-13 is an Intel runner, macos-latest is an ARM runner
+        os: [macos-13, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+            submodules: true
+      - run: cd astrometry.net && git apply ../astrometry.net.patch
+      - run: python -m pip install cibuildwheel==2.21.3
+      - run: python -m cibuildwheel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: wheelhouse
+  test_library:
+    name: Test library on ${{ matrix.os }} with Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    needs: [build_wheels]
+    strategy:
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        # macos-13 is an Intel runner, macos-latest is an ARM runner
+        os: [macos-13, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: wheelhouse
+      - run: python --version
+      - run: python -m pip install toml
+      - run: python .github/workflows/install_dependencies.py
+      - run: ls wheelhouse
+      - run: python -m pip install --no-index --find-links wheelhouse astrometry
+      - run: python -c 'import astrometry'
+  build_sdist:
+    name: Build source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: cd astrometry.net && git apply ../astrometry.net.patch
+      - run: pipx run build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*.tar.gz
+  upload_pypi:
+    name: Upload wheels and sidst to PyPI
+    runs-on: ubuntu-latest
+    needs: [build_wheels, test_library, build_sdist]
+    if: github.event_name == 'release' && github.event.action == 'published'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: wheelhouse
+          pattern: "*"
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - run: mv wheelhouse/* dist/
+      - uses: pypa/gh-action-pypi-publish@v1.8.14
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
