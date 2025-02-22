@@ -6,7 +6,7 @@ dirname = pathlib.Path(__file__).resolve().parent
 
 with astrometry.Solver(
     astrometry.series_5200.index_files(
-        cache_directory="astrometry_cache",
+        cache_directory=dirname / "astrometry_cache",
         scales={6},
     )
 ) as solver:
