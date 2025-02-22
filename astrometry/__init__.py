@@ -292,7 +292,6 @@ class Solver:
             solution_parameters.maximum_quad_size_pixels == 0.0
             or minimum_quad_size_pixels < solution_parameters.maximum_quad_size_pixels
         )
-        print(f"{minimum_quad_size_pixels=}") # @DEV
         raw_solution = self.inner.solve(
             stars_xs if isinstance(stars_xs, list) else list(stars_xs),
             stars_ys if isinstance(stars_ys, list) else list(stars_ys),

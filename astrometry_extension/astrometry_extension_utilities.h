@@ -59,7 +59,6 @@ static void match_vector_clear(match_vector_t* match_vector) {
 }
 
 static void match_vector_reserve(match_vector_t* match_vector, size_t capacity) {
-    printf("match_vector_reserve, capacity was %lu, requested capacity: %lu\n", match_vector->capacity, capacity); // @DEV
     if (capacity <= match_vector->capacity) {
         return;
     }
