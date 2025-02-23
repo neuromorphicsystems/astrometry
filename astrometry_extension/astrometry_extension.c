@@ -487,7 +487,7 @@ static PyObject* astrometry_extension_solver_solve(PyObject* self, PyObject* arg
                 simple_index_name(index, &index_name);
                 PyEval_RestoreThread(context.save);
                 PyObject* message = PyUnicode_FromFormat(
-                    "solve %s: slice=[%d, %d[ (%zd / %zd), index=%s (%zu / %zu)",
+                    "solve %s: slice=[%d, %d) (%zd / %zd), index=%s (%zu / %zu)",
                     solve_id,
                     context.solver.startobj,
                     context.solver.endobj,

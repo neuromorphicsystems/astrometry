@@ -79,9 +79,8 @@ static MatchObj* match_vector_push(match_vector_t* match_vector, MatchObj* match
     MatchObj* inserted_match = match_vector->data + match_vector->size;
     match_vector->size += 1;
     if (match->sip != NULL) {
-        sip_t* inserted_sip = malloc(sizeof(sip_t));
-        memcpy(inserted_sip, match->sip, sizeof(sip_t));
-        inserted_match->sip = inserted_sip;
+        inserted_match->sip = malloc(sizeof(sip_t));
+        memcpy(inserted_match->sip, match->sip, sizeof(sip_t));
     }
     inserted_match->refradec = NULL;
     inserted_match->fieldxy = NULL;

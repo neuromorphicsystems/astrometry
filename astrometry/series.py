@@ -6,7 +6,8 @@ import pathlib
 import threading
 import typing
 
-import requests
+if typing.TYPE_CHECKING:
+    import requests
 
 CHUNK_SIZE = 1048576
 DOWNLOAD_SUFFIX = ".download"
@@ -25,10 +26,10 @@ def size_to_string(size: int) -> str:
     return f'{"{:.2f}".format(size / 1000000000000)} TB'
 
 
-def run(session: requests.Session, task: tuple[str, pathlib.Path, pathlib.Path]):
+def run(session: "requests.Session", task: tuple[str, pathlib.Path, pathlib.Path]):
     url, path, download_path = task
     logging.info(f'downloading "{url}" to "{path}"')
-    response: typing.Optional[requests.Response] = None
+    response: "typing.Optional[requests.Response]" = None
     mode = "wb"
     if download_path.is_file():
         response = session.get(
@@ -58,6 +59,8 @@ def run(session: requests.Session, task: tuple[str, pathlib.Path, pathlib.Path])
 
 
 def worker_target(queue: collections.deque):
+    import requests
+
     with requests.Session() as session:
         while True:
             try:
@@ -133,6 +136,8 @@ class Series:
                 f"downloading {len(tasks)} file{'' if len(tasks) == 1 else 's'} ({size_to_string(download_size)})"
             )
         if len(tasks) == 1:
+            import requests
+
             with requests.Session() as session:
                 run(session=session, task=tasks.popleft())
         elif len(tasks) > 1:

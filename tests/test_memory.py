@@ -1,3 +1,4 @@
+import gc
 import pathlib
 import random
 
@@ -48,6 +49,15 @@ def size_to_string(size: int) -> str:
 
 memory_samples = numpy.zeros(SOLVES, dtype=numpy.int64)
 
+
+def get_memory_sample() -> int:
+    gc.collect()
+    memory_info = process.memory_full_info()
+    uss = memory_info.uss
+    del memory_info
+    return uss
+
+
 for index in range(0, SOLVES):
     with astrometry.Solver(
         astrometry.series_5200.index_files(
@@ -63,7 +73,7 @@ for index in range(0, SOLVES):
         )
         assert solution.has_match()
         del solution
-    memory_sample = process.memory_full_info().uss
+    memory_sample = get_memory_sample()
     memory_samples[index] = memory_sample
     print(
         f"(repeated solver allocation with context manager) solve {index + 1} / {SOLVES}, memory usage: {size_to_string(memory_sample)}"
@@ -94,7 +104,7 @@ for index in range(0, SOLVES):
     solver.close()
     del solution
     del solver
-    memory_sample = process.memory_full_info().uss
+    memory_sample = get_memory_sample()
     memory_samples[index] = memory_sample
     print(
         f"(repeated solver allocation) solve {index + 1} / {SOLVES}, memory usage: {size_to_string(memory_sample)}"
@@ -125,7 +135,7 @@ with astrometry.Solver(
         )
         assert solution.has_match()
         del solution
-        memory_sample = process.memory_full_info().uss
+        memory_sample = get_memory_sample()
         memory_samples[index] = memory_sample
         print(
             f"(repeated solves) solve {index + 1} / {SOLVES}, memory usage: {size_to_string(memory_sample)}"
@@ -159,7 +169,7 @@ with astrometry.Solver(
         )
         del solution
         del stars
-        memory_sample = process.memory_full_info().uss
+        memory_sample = get_memory_sample()
         memory_samples[index] = memory_sample
         print(
             f"(repeated solves, random stars) solve {index + 1} / {SOLVES}, memory usage: {size_to_string(memory_sample)}"

@@ -1,21 +1,79 @@
+diff --git a/solver/control-program.c b/solver/control-program.c
+index 1bb68ad5..d5dd4cb6 100644
+--- a/solver/control-program.c
++++ b/solver/control-program.c
+@@ -110,6 +110,10 @@ static anbool record_match_callback(MatchObj* mo, void* userdata) {
+     int i;
+     // copy "mo" to "mymatch"
+     memcpy(mymatch, mo, sizeof(MatchObj));
++    if (mo->sip != NULL) {
++        mymatch.sip = malloc(sizeof(sip_t));
++        memcpy(mymatch.sip, mo->sip, sizeof(sip_t));
++    }
+     // steal these arrays from "mo": we memcpy'd the pointers above, now NULL
+     // them out in "mo" to prevent them from being free'd.
+     mo->theta = NULL;
+@@ -477,6 +481,7 @@ int main(int argc, char** args) {
+         }
+ 
+     skip:
++        free(cb.match.sip);
+         solver_cleanup_field(solver);
+         solver_clear_indexes(solver);
+ 
 diff --git a/solver/solver.c b/solver/solver.c
-index fe1c66d0..f3987fda 100644
+index fe1c66d0..bb031988 100644
 --- a/solver/solver.c
 +++ b/solver/solver.c
-@@ -1358,6 +1358,12 @@ static void resolve_matches(kdtree_qres_t* krez, const double *field_xy,
-         if (solver_handle_hit(solver, &mo, NULL, FALSE))
-             solver->quit_now = TRUE;
+@@ -180,6 +180,10 @@ void solver_tweak2(solver_t* sp, MatchObj* mo, int order, sip_t* verifysip) {
  
-+        if (mo.sip != solver->best_match.sip)
-+        {
-+            sip_free(mo.sip);
-+            mo.sip = NULL;
+     logverb("solver_tweak2: set_crpix %i, crpix (%.1f,%.1f)\n",
+             sp->set_crpix, sp->crpix[0], sp->crpix[1]);
++    if (mo->sip != NULL) {
++        free(mo->sip);
++        mo->sip = NULL;
++    }
+     mo->sip = tweak2(xy, Nxy,
+                      sp->verify_pix, // pixel positional noise sigma
+                      solver_field_width(sp),
+@@ -352,10 +356,15 @@ static void update_timeused(solver_t* sp) {
+ }
+ 
+ static void set_matchobj_template(solver_t* solver, MatchObj* mo) {
+-    if (solver->mo_template)
++    if (solver->mo_template) {
+         memcpy(mo, solver->mo_template, sizeof(MatchObj));
+-    else
++        if (solver->mo_template->sip != NULL) {
++            mo->sip = malloc(sizeof(sip_t));
++            memcpy(mo->sip, solver->mo_template->sip, sizeof(sip_t));
 +        }
++    } else {
+         memset(mo, 0, sizeof(MatchObj));
++    }
+ }
+ 
+ static void get_field_center(solver_t* s, double* cx, double* cy) {
+@@ -1355,11 +1364,16 @@ static void resolve_matches(kdtree_qres_t* krez, const double *field_xy,
+ 
+         set_center_and_radius(solver, &mo, &(mo.wcstan), NULL);
+ 
+-        if (solver_handle_hit(solver, &mo, NULL, FALSE))
++        if (solver_handle_hit(solver, &mo, NULL, FALSE)) {
+             solver->quit_now = TRUE;
++        }
+ 
+-        if (unlikely(solver->quit_now))
++        sip_free(mo.sip);
++        mo.sip = NULL;
 +
-         if (unlikely(solver->quit_now))
++        if (unlikely(solver->quit_now)) {
              return;
++        }
      }
-@@ -1409,6 +1415,7 @@ static int solver_handle_hit(solver_t* sp, MatchObj* mo, sip_t* verifysip,
+ }
+ 
+@@ -1409,6 +1423,7 @@ static int solver_handle_hit(solver_t* sp, MatchObj* mo, sip_t* verifysip,
          // Since we tuned up this solution, we can't just accept the
          // resulting log-odds at face value.
          if (!fake_match) {
@@ -23,7 +81,7 @@ index fe1c66d0..f3987fda 100644
              verify_hit(sp->index->starkd, sp->index->cutnside,
                         mo, mo->sip, sp->vf, match_distance_in_pixels2,
                         sp->distractor_ratio,
-@@ -1423,8 +1430,10 @@ static int solver_handle_hit(solver_t* sp, MatchObj* mo, sip_t* verifysip,
+@@ -1423,8 +1438,10 @@ static int solver_handle_hit(solver_t* sp, MatchObj* mo, sip_t* verifysip,
          }
      }
  
@@ -35,7 +93,7 @@ index fe1c66d0..f3987fda 100644
  
      // Also copy original field star coordinates
      //mo.quadpix_orig
-@@ -1444,8 +1453,10 @@ static int solver_handle_hit(solver_t* sp, MatchObj* mo, sip_t* verifysip,
+@@ -1444,8 +1461,10 @@ static int solver_handle_hit(solver_t* sp, MatchObj* mo, sip_t* verifysip,
  
      matchobj_print(mo, log_get_level());
  
@@ -47,6 +105,27 @@ index fe1c66d0..f3987fda 100644
  
      logverb("Pixel scale: %g arcsec/pix.\n", mo->scale);
      logverb("Parity: %s.\n", (mo->parity ? "neg" : "pos"));
+@@ -1638,9 +1657,19 @@ static int solver_handle_hit(solver_t* sp, MatchObj* mo, sip_t* verifysip,
+ 
+     // New best match?
+     if (!sp->have_best_match || (mo->logodds > sp->best_match.logodds)) {
+-        if (sp->have_best_match)
++        if (sp->have_best_match) {
++            // free the previous best match (including its sip, if any)
+             verify_free_matchobj(&sp->best_match);
++            if (sp->best_match.sip != NULL) {
++                free(sp->best_match.sip);
++                sp->best_match.sip = NULL;
++            }
++        }
+         memcpy(&sp->best_match, mo, sizeof(MatchObj));
++        if (mo->sip != NULL) {
++            sp->best_match.sip = malloc(sizeof(sip_t));
++            memcpy(sp->best_match.sip, mo->sip, sizeof(sip_t));
++        }
+         sp->have_best_match = TRUE;
+         sp->best_index = sp->index;
+     } else {
 diff --git a/solver/tweak2.c b/solver/tweak2.c
 index ee3150c4..75813246 100644
 --- a/solver/tweak2.c
@@ -194,3 +273,33 @@ index ee3150c4..75813246 100644
  
      return sipout;
  }
+diff --git a/solver/whynot.c b/solver/whynot.c
+index 2b6323bb..26061844 100644
+--- a/solver/whynot.c
++++ b/solver/whynot.c
+@@ -977,6 +977,10 @@ int main(int argc, char** args) {
+             fq.pscale = tan_pixel_scale(&wcs);
+             fq.quadnum = quad;
+             memcpy(&(fq.mo), &mo, sizeof(MatchObj));
++            if (mo->sip != NULL) {
++                fq.mo.sip = malloc(sizeof(sip_t));
++                memcpy(fq.mo.sip, mo->sip, sizeof(sip_t));
++            }
+             bl_append(foundquads, &fq);
+         }
+ 
+diff --git a/util/matchfile.c b/util/matchfile.c
+index 816e2235..02826522 100644
+--- a/util/matchfile.c
++++ b/util/matchfile.c
+@@ -179,6 +179,10 @@ pl* matchfile_get_matches_for_field(matchfile* mf, int field) {
+         }
+         copy = malloc(sizeof(MatchObj));
+         memcpy(copy, mo, sizeof(MatchObj));
++        if (mo->sip != NULL) {
++            copy->sip = malloc(sizeof(sip_t));
++            memcpy(copy->sip, mo->sip, sizeof(sip_t));
++        }
+         pl_append(list, copy);
+     }
+     return list;
